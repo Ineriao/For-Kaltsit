@@ -1,0 +1,29 @@
+# 依赖
+node_modules/
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# 构建产物
+dist/
+dist-electron/
+app/dist/
+
+# 密钥（绝对不提交）
+.env
+backend/.env
+
+# 大文件
+*.wav
+*.webm
+立绘_*.png
+
+# 游戏数据（体积太大）
+ArknightsGameData-master/
+
+# 系统
+.DS_Store
+Thumbs.db
+app/public/cursors/*.cur
+app/public/cursors/*.ani

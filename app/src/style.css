@@ -1,0 +1,50 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+:root {
+  --ak-ice: #a8c8d8;
+  --ak-ice-border: rgba(168, 200, 216, 0.22);
+  --ak-text: rgba(220, 230, 236, 0.92);
+  --ak-text-dim: rgba(168, 200, 216, 0.4);
+  --ak-gold: rgba(200, 168, 100, 0.8);
+  --ak-red: rgba(200, 80, 80, 0.85);
+  --ak-glass: rgba(8, 10, 14, 0.82);
+}
+
+html, body, #app {
+  width: 500px;
+  height: 700px;
+  max-width: 500px;
+  max-height: 700px;
+  overflow: hidden;
+  contain: strict;
+  background: transparent;
+  font-family: 'Source Han Sans CN', 'Noto Sans CJK SC', 'PingFang SC', sans-serif;
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+  cursor: url('/cursors/PRTS - normal 正常选择.cur'), auto;
+}
+
+button:hover { cursor: url('/cursors/Kaltsit-Link.ani'), pointer; }
+
+::-webkit-scrollbar { width: 2px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(168,200,216,0.2); border-radius: 1px; }
+
+@keyframes breathe {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
