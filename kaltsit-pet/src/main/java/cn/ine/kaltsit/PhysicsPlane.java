@@ -1,4 +1,4 @@
-package cn.ine.kaltsit;
+REpackage cn.ine.kaltsit;
 
 /** 封装 Ark-Pets 原版 Plane，使用原始物理参数 */
 public class PhysicsPlane {
