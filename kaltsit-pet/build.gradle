@@ -1,0 +1,56 @@
+plugins {
+    id 'java'
+    id 'application'
+}
+
+group = 'cn.ine.kaltsit'
+version = '1.0.0'
+
+java {
+    toolchain { languageVersion = JavaLanguageVersion.of(17) }
+}
+
+compileJava.options.encoding   = 'UTF-8'
+compileTestJava.options.encoding = 'UTF-8'
+
+repositories {
+    maven { url = "https://maven.aliyun.com/repository/public/" }
+    mavenCentral()
+}
+
+ext {
+    gdxVersion      = '1.11.0'
+    spineVersion    = '3.8.99.1'
+    jnaVersion      = '5.12.1'
+    lwjglVersion    = '3.3.3'
+}
+
+dependencies {
+    // Spine 3.8 Runtime
+    implementation "com.esotericsoftware.spine:spine-libgdx:${spineVersion}"
+    // libGDX core + LWJGL3 backend
+    implementation "com.badlogicgames.gdx:gdx:${gdxVersion}"
+    implementation "com.badlogicgames.gdx:gdx-backend-lwjgl3:${gdxVersion}"
+    implementation "com.badlogicgames.gdx:gdx-platform:${gdxVersion}:natives-desktop"
+    // JNA for Win32 API (透明窗口 + 点击穿透)
+    implementation "net.java.dev.jna:jna:${jnaVersion}"
+    implementation "net.java.dev.jna:jna-platform:${jnaVersion}"
+    // JSON
+    implementation 'com.alibaba.fastjson2:fastjson2:2.0.60'
+}
+
+application {
+    mainClass = 'cn.ine.kaltsit.Launcher'
+    applicationDefaultJvmArgs = [
+        '--add-opens', 'java.base/java.lang=ALL-UNNAMED',
+        '--add-opens', 'java.base/java.nio=ALL-UNNAMED'
+    ]
+}
+
+jar {
+    manifest {
+        attributes 'Main-Class': 'cn.ine.kaltsit.Launcher'
+    }
+    from configurations.runtimeClasspath.collect { it.isDirectory() ? it : zipTree(it) }
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+}

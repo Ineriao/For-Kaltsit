@@ -18,11 +18,23 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import PetMode from './components/PetMode.vue'
 import ChatMode from './components/ChatMode.vue'
 import { sendMessage } from './api/chat.js'
 import { playVoice, playFile } from './api/voice.js'
+
+// 全局点击波纹
+function spawnRipple(e) {
+  const el = document.createElement('div')
+  el.className = 'click-ripple'
+  el.style.left = e.clientX + 'px'
+  el.style.top  = e.clientY + 'px'
+  document.body.appendChild(el)
+  el.addEventListener('animationend', () => el.remove())
+}
+onMounted(() => window.addEventListener('mousedown', spawnRipple))
+onUnmounted(() => window.removeEventListener('mousedown', spawnRipple))
 
 // 台词文案中 {@nickname} 的替换，读自设置
 function getDoctorName() {
@@ -70,6 +82,8 @@ function handleSpriteTouch() {
 
 onMounted(() => {
   setTimeout(() => playFile('任命助理.wav'), 800)
+  // 监听主进程右键菜单的"展开对话"
+  window.electronAPI?.onOpenChat(() => openChat())
 })
 
 function openChat() {

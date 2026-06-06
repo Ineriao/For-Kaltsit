@@ -9,21 +9,34 @@ venv/
 dist/
 dist-electron/
 app/dist/
+kaltsit-pet/build/
+kaltsit-pet/.gradle/
 
 # 密钥（绝对不提交）
 .env
 backend/.env
 
-# 大文件
+# 大文件资源
 *.wav
 *.webm
 立绘_*.png
+Model/
 
 # 游戏数据（体积太大）
 ArknightsGameData-master/
+Ark-Pets-3.x/
+SpineModel/
+
+# 光标包
+"PRTS cursor 2 .1/"
+"【动态】鼠标指针-凯尔希+思衡托--BLZ/"
+app/public/cursors/*.cur
+app/public/cursors/*.ani
+app/public/cursors/Kaltsit-Link.ani
 
 # 系统
 .DS_Store
 Thumbs.db
-app/public/cursors/*.cur
-app/public/cursors/*.ani
+app/electron-31.7.7.tgz
+app/package-lock.json
+*.code-workspace

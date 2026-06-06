@@ -131,14 +131,41 @@ ipcMain.on('window-drag', (_, { deltaX, deltaY }) => {
 ipcMain.on('mode-change', (_, mode) => {
   if (!mainWindow) return
   if (mode === 'pet') {
-    mainWindow.setSize(180, 240)
+    mainWindow.setContentSize(800, 800)
     mainWindow.setAlwaysOnTop(true)
+    mainWindow.setResizable(false)
   } else {
-    mainWindow.setSize(500, 700)
+    mainWindow.setContentSize(500, 700)
     mainWindow.setAlwaysOnTop(false)
+    mainWindow.setResizable(false)
   }
 })
 
 ipcMain.on('window-close', () => app.quit())
 ipcMain.on('window-minimize', () => mainWindow?.minimize())
 ipcMain.on('window-hide', () => mainWindow?.hide())
+
+// 桌宠右键菜单
+ipcMain.on('pet-context-menu', () => {
+  if (!mainWindow) return
+  const menu = Menu.buildFromTemplate([
+    {
+      label: '展开对话',
+      click: () => {
+        mainWindow.setContentSize(500, 700)
+        mainWindow.setAlwaysOnTop(false)
+        mainWindow.webContents.send('open-chat')
+      }
+    },
+    { type: 'separator' },
+    {
+      label: '最小化',
+      click: () => mainWindow.minimize()
+    },
+    {
+      label: '退出',
+      click: () => app.quit()
+    },
+  ])
+  menu.popup({ window: mainWindow })
+})
