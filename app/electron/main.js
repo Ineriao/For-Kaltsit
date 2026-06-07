@@ -127,18 +127,17 @@ ipcMain.on('window-drag', (_, { deltaX, deltaY }) => {
   mainWindow.setContentSize(500, 700)
 })
 
-// 模式切换：chat ↔ pet
+// 模式切换：chat ↔ pet（pet 模式直接隐藏 Electron 窗口，Java 桌宠独立运行）
 ipcMain.on('mode-change', (_, mode) => {
   if (!mainWindow) return
   if (mode === 'pet') {
-    mainWindow.setContentSize(800, 800)
-    mainWindow.setAlwaysOnTop(true)
-    mainWindow.setResizable(false)
+    mainWindow.hide()        // 隐藏 Electron，Java 桌宠独立显示
     sendToPet('show')
   } else {
     mainWindow.setContentSize(500, 700)
     mainWindow.setAlwaysOnTop(false)
     mainWindow.setResizable(false)
+    mainWindow.show()
     sendToPet('hide')
   }
 })

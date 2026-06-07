@@ -1,8 +1,6 @@
 <template>
-  <div class="app-root" :class="{ 'mode-pet': mode === 'pet', 'mode-chat': mode === 'chat' }">
-    <PetMode v-if="mode === 'pet'" @open-chat="openChat" />
+  <div class="app-root">
     <ChatMode
-      v-else
       :messages="messages"
       :is-typing="isTyping"
       :current-text="currentDisplayText"
@@ -19,7 +17,6 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import PetMode from './components/PetMode.vue'
 import ChatMode from './components/ChatMode.vue'
 import { sendMessage } from './api/chat.js'
 import { playVoice, playFile } from './api/voice.js'
@@ -36,13 +33,11 @@ function spawnRipple(e) {
 onMounted(() => window.addEventListener('mousedown', spawnRipple))
 onUnmounted(() => window.removeEventListener('mousedown', spawnRipple))
 
-// 台词文案中 {@nickname} 的替换，读自设置
 function getDoctorName() {
   const s = JSON.parse(localStorage.getItem('kaltsit_settings') || 'null')
   return s?.doctorName || '真理'
 }
 
-const mode   = ref('chat')
 const messages = ref([
   { role: 'assistant', text: '不必过分在意我的状态，我会尽快适应生理机能的些许变化，这不会妨碍我的工作。从现在开始，还是由我来担任你的全科医生。' }
 ])
@@ -51,7 +46,6 @@ const currentDisplayText = ref('')
 const touchText          = ref('')
 const touchActive        = ref(false)
 
-// 触摸立绘：台词与语音严格一一对应（思衡托语音库）
 const TOUCH_PAIRS = [
   { file: '戳一下.wav',          text: '不必频繁确认我的状态，这副躯体与常人无异。' },
   { file: '交谈1.wav',           text: '石棺的核心装置正维系着我的生命，短时间内我还无法脱离它而行动。谨慎对待自己的生命状态，对我来说也算是从未有过的体验。许多事物我都要重新熟悉。也许这一次，我还是会需要你的指引。' },
@@ -67,14 +61,11 @@ const TOUCH_PAIRS = [
 let lastTouchIdx = -1
 
 function handleSpriteTouch() {
-  // 排除上一次，随机选一对
   const pool = TOUCH_PAIRS.map((_, i) => i).filter(i => i !== lastTouchIdx)
   const idx  = pool[Math.floor(Math.random() * pool.length)]
   lastTouchIdx = idx
-
   const pair = TOUCH_PAIRS[idx]
   const name = getDoctorName()
-
   touchText.value   = pair.text.replace(/博士/g, name)
   touchActive.value = true
   playFile(pair.file)
@@ -82,18 +73,16 @@ function handleSpriteTouch() {
 
 onMounted(() => {
   setTimeout(() => playFile('任命助理.wav'), 800)
-  // 监听主进程右键菜单的"展开对话"
-  window.electronAPI?.onOpenChat(() => openChat())
+  window.electronAPI?.onOpenChat(() => showChat())
 })
 
-function openChat() {
-  mode.value = 'chat'
+function showChat() {
   window.electronAPI?.setMode('chat')
 }
 
 function closeToSpeaker() {
-  mode.value = 'pet'
-  window.electronAPI?.setMode('pet')
+  // 废弃 Electron PetMode：直接隐藏窗口，Java 桌宠独立运行
+  window.electronAPI?.hideWindow()
 }
 
 function minimizeWindow() {
@@ -103,15 +92,12 @@ function minimizeWindow() {
 async function handleSend(text) {
   if (!text.trim() || isTyping.value) return
   touchActive.value = false
-
   const name = getDoctorName()
   messages.value.push({ role: 'user', text })
   isTyping.value = true
   currentDisplayText.value = ''
-
   try {
     const raw = await sendMessage(messages.value)
-    // 替换回复中的称呼占位符
     const reply = raw.replace(/Dr\.\{@nickname\}/g, name).replace(/\{@nickname\}/g, name)
     await typewriterDisplay(reply)
     messages.value.push({ role: 'assistant', text: reply })
