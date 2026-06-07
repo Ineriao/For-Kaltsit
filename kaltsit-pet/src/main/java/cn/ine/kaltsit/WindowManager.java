@@ -36,17 +36,11 @@ public class WindowManager {
     private static final HWND HWND_NOTOPMOST = new HWND(new com.sun.jna.Pointer(-2));
     private static final int  SWP_FLAGS = WinUser.SWP_NOSIZE | WinUser.SWP_NOMOVE | WinUser.SWP_NOACTIVATE;
 
-    /** 初始化窗口层级：高于任务栏但低于普通窗口 */
+    /** 初始化窗口层级 */
     public void setAlwaysOnTop(boolean enable) {
         if (hWnd == null) return;
-        if (enable) {
-            // 先设 TOPMOST 确保在任务栏上方
-            User32.INSTANCE.SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_FLAGS);
-            // 再立即降为 NOTOPMOST，这样普通窗口激活后会挡住凯尔希
-            User32.INSTANCE.SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_FLAGS);
-        } else {
-            User32.INSTANCE.SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_FLAGS);
-        }
+        // 用 HWND_TOPMOST 确保可见，不被桌面遮挡
+        User32.INSTANCE.SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_FLAGS);
         // 不在任务栏显示
         int style = User32.INSTANCE.GetWindowLong(hWnd, WinUser.GWL_EXSTYLE);
         style |= WS_EX_TOOLWINDOW;
@@ -54,10 +48,10 @@ public class WindowManager {
         User32.INSTANCE.SetWindowLong(hWnd, WinUser.GWL_EXSTYLE, style);
     }
 
-    /** 设置窗口位置（不强制置顶） */
+    /** 设置窗口位置，保持 TOPMOST */
     public void setPosition(int x, int y) {
         if (hWnd == null) return;
-        User32.INSTANCE.SetWindowPos(hWnd, HWND_NOTOPMOST, x, y,
+        User32.INSTANCE.SetWindowPos(hWnd, HWND_TOPMOST, x, y,
                 Launcher.WIDTH, Launcher.HEIGHT, WinUser.SWP_NOACTIVATE);
     }
 

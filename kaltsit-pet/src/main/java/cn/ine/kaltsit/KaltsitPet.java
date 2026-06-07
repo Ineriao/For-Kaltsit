@@ -51,9 +51,10 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
         physics.setObjSize(Launcher.WIDTH, Launcher.HEIGHT);
         float usableH = screenH - taskbarH;
         physics.setWorldArea(usableH, screenW);
-        physics.setPosition(screenW - Launcher.WIDTH - 20f, 0f);
+        // 初始位置：屏幕中央偏右，方便找到
+        physics.setPosition(screenW / 2f, 0f);
         applyWindowPos();
-        System.out.println("[KaltsitPet] 初始窗口位置: wx=" + (int)(screenW - Launcher.WIDTH - 20) +
+        System.out.println("[KaltsitPet] 初始窗口位置: wx=" + (int)(screenW/2) +
             " wy=" + (int)(screenH - taskbarH - 0 - Launcher.HEIGHT));
     }
 
