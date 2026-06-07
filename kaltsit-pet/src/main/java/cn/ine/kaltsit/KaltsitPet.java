@@ -178,21 +178,20 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
 
     private void onMouseDrag() {
         if (mouseButton != com.badlogic.gdx.Input.Buttons.RIGHT) {
-            // 严格参照 ArkPets onMouseDrag（第262-265行）：
-            // x = windowPosition.now().x + deltaX
-            // y = windowPosition.now().y + deltaY
-            // plane.changePosition(dt, x, -(height + y))
-            // windowPosition.setToEnd()
-            float winX = windowPosition.now().x + mouseDeltaX;
-            float winY = windowPosition.now().y + mouseDeltaY;
-            // 窗口坐标 → 物理坐标（ArkPets: plane.changePosition(dt, x, -(height+y))）
+            // 直接用窗口屏幕坐标跟随鼠标（最简单最准确）
+            // 拖动起始时记录的窗口左上角位置 + 鼠标总位移
+            int totalDx = mouseX - dragStartMouseX;
+            int totalDy = mouseY - dragStartMouseY;
+            float winX = dragStartPhysX + totalDx;           // 窗口左上角 X
+            float winY = (screenH - taskbarH - dragStartPhysY - Launcher.HEIGHT) + totalDy; // 窗口左上角 Y
+            // 直接设窗口位置，不走物理引擎
+            window.setPosition((int) winX, (int) winY);
+            windowPosition.reset(winX, winY);
+            windowPosition.setToEnd();
+            // 同步物理坐标（松手后物理接管）
             float physX = winX;
             float physY = screenH - taskbarH - winY - Launcher.HEIGHT;
-            physics.drag(Gdx.graphics.getDeltaTime(), physX, physY);
-            // 立刻更新 windowPosition 并 setToEnd（ArkPets 原话）
-            windowPosition.reset(physX, winY);
-            windowPosition.setToEnd();
-            applyWindowPos();
+            physics.setPosition(physX, physY);
             if (Math.abs(lastDragDeltaX) >= 4)
                 spine.setFacing((int) Math.signum(lastDragDeltaX));
         }
