@@ -20,9 +20,16 @@ public class WindowManager {
 
     public void attach(Lwjgl3Graphics graphics) {
         glfwHandle = graphics.getWindow().getWindowHandle();
-        // 通过窗口标题找到 HWND
-        hWnd = User32.INSTANCE.FindWindow(null, Launcher.TITLE);
-        System.out.println("[Window] HWND=" + hWnd + ", GLFW=" + glfwHandle);
+        // 直接从 GLFW 获取 Win32 HWND，不依赖 FindWindow（可能因时序失败）
+        long hwndLong = org.lwjgl.glfw.GLFWNativeWin32.glfwGetWin32Window(glfwHandle);
+        if (hwndLong != 0) {
+            hWnd = new HWND(new com.sun.jna.Pointer(hwndLong));
+            System.out.println("[Window] HWND from GLFW=0x" + Long.toHexString(hwndLong));
+        } else {
+            // 备用：FindWindow
+            hWnd = User32.INSTANCE.FindWindow(null, Launcher.TITLE);
+            System.out.println("[Window] HWND from FindWindow=" + hWnd);
+        }
     }
 
     /** 设置鼠标穿透（透明像素不响应鼠标） */

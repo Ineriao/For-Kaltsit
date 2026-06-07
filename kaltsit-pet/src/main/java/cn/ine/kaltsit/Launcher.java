@@ -6,8 +6,8 @@ import com.badlogic.gdx.graphics.Color;
 
 public class Launcher {
     public static final String TITLE   = "KaltsitPet";
-    public static final int    WIDTH   = 400;
-    public static final int    HEIGHT  = 500;
+    public static final int    WIDTH   = 600;
+    public static final int    HEIGHT  = 750;
     public static final int    FPS     = 30;
 
     // Spine 模型路径（Building 基建模式）

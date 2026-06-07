@@ -60,9 +60,7 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
 
     @Override
     public void render() {
-        Gdx.gl.glClearColor(0, 0, 0, 0);
-        Gdx.gl.glClear(GL20.GL_COLOR_BUFFER_BIT);
-
+        // 参照 ArkPets：不清空主帧缓冲，由 LWJGL3 透明帧缓冲合成处理
         float delta = Math.min(Gdx.graphics.getDeltaTime(), 0.05f);
 
         if (!dragging) {
