@@ -19,13 +19,20 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
     private int   screenW, screenH;
     private int   mouseX = 0, mouseY = 0;
 
-    // 拖拽状态（参照 ArkPets isMouseDragging）
+    // 拖拽状态
     private boolean isMouseDragging = false;
     private boolean isMouseDown     = false;
     private int     mouseButton     = 0;
     private int     mouseDeltaX     = 0;
     private int     mouseDeltaY     = 0;
     private int     lastDragDeltaX  = 0;
+
+    // 拖拽起始记录
+    private int   dragStartMouseX = 0, dragStartMouseY = 0;
+    private float dragStartPhysX  = 0, dragStartPhysY  = 0;
+
+    // 参照 ArkPets：windowPosition 缓动插值，拖动时 setToEnd() 立刻跳到目标
+    private TransitionVector2 windowPosition;
 
     @Override
     public void create() {
@@ -53,6 +60,11 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
         physics.setObjSize(Launcher.WIDTH, Launcher.HEIGHT);
         physics.setWorldArea(screenH - taskbarH, screenW);
         physics.setPosition(screenW / 2f, 0f);
+
+        // 参照 ArkPets：windowPosition 缓动插值器（0.1s 过渡）
+        windowPosition = new TransitionVector2(EasingFunction.EASE_OUT_SINE, 0.1f);
+        windowPosition.reset(physics.getX(), getWindowY());
+        windowPosition.setToEnd();
         applyWindowPos();
     }
 
@@ -60,7 +72,6 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
     public void render() {
         float delta = Math.min(Gdx.graphics.getDeltaTime(), 0.05f);
 
-        // 参照 ArkPets render()：如果没有拖拽则正常物理模拟
         if (!isMouseDragging) {
             if (behavior.isMoving()) {
                 int dir = behavior.getMoveDir();
@@ -71,8 +82,13 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
             } else {
                 physics.update(delta);
             }
-            applyWindowPos();
         }
+
+        // 参照 ArkPets render() 第166-168行：
+        // windowPosition.reset(plane.getX(), windowY) → addProgress → updateWindow
+        windowPosition.reset(physics.getX(), getWindowY());
+        windowPosition.addProgress(delta);
+        applyWindowPos();
 
         BehaviorSystem.State bs = behavior.getCurrent();
         boolean lowFloor = (bs == BehaviorSystem.State.SIT || bs == BehaviorSystem.State.SLEEP);
@@ -81,14 +97,12 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
         behavior.update(delta);
         spine.render(batch, delta);
 
-        // 方案B：每帧用全局鼠标位置检测穿透（不依赖 GLFW 事件）
-        // 鼠标在凯尔希身上 → 关穿透（可交互）；在透明区域 → 开穿透（系统级真穿透，不框选）
+        // 方案B：每帧用全局鼠标位置检测穿透
         if (!isMouseDragging) {
-            int[] cur = window.getCursorPos();   // 屏幕绝对坐标
-            int[] win = window.getPosition();     // 窗口左上角屏幕坐标
+            int[] cur = window.getCursorPos();
+            int[] win = window.getPosition();
             int localX = cur[0] - win[0];
             int localY = cur[1] - win[1];
-            // isPixelSolid 接受窗口坐标（0=顶部），内部自己做 Y 翻转
             boolean solid = (localX >= 0 && localY >= 0
                     && localX < Launcher.WIDTH && localY < Launcher.HEIGHT
                     && spine.isPixelSolid(localX, localY));
@@ -111,8 +125,13 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
         mouseDeltaX = 0; lastDragDeltaX = 0;
         mouseButton = button;
         isMouseDown = true;
+        // 记录拖拽起始（绝对坐标跟随用）
+        dragStartMouseX = screenX;
+        dragStartMouseY = screenY;
+        dragStartPhysX  = physics.getX();
+        dragStartPhysY  = physics.getY();
         onMouseDown();
-        return true; // 参照 ArkPets：返回 true 消费事件
+        return true;
     }
 
     @Override
@@ -159,9 +178,20 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
 
     private void onMouseDrag() {
         if (mouseButton != com.badlogic.gdx.Input.Buttons.RIGHT) {
-            float newX = physics.getX() + mouseDeltaX;
-            float newY = physics.getY() - mouseDeltaY;
-            physics.drag(Gdx.graphics.getDeltaTime(), newX, newY);
+            // 严格参照 ArkPets onMouseDrag（第262-265行）：
+            // x = windowPosition.now().x + deltaX
+            // y = windowPosition.now().y + deltaY
+            // plane.changePosition(dt, x, -(height + y))
+            // windowPosition.setToEnd()
+            float winX = windowPosition.now().x + mouseDeltaX;
+            float winY = windowPosition.now().y + mouseDeltaY;
+            // 窗口坐标 → 物理坐标（ArkPets: plane.changePosition(dt, x, -(height+y))）
+            float physX = winX;
+            float physY = screenH - taskbarH - winY - Launcher.HEIGHT;
+            physics.drag(Gdx.graphics.getDeltaTime(), physX, physY);
+            // 立刻更新 windowPosition 并 setToEnd（ArkPets 原话）
+            windowPosition.reset(physX, winY);
+            windowPosition.setToEnd();
             applyWindowPos();
             if (Math.abs(lastDragDeltaX) >= 4)
                 spine.setFacing((int) Math.signum(lastDragDeltaX));
@@ -182,9 +212,15 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
     @Override public boolean keyTyped(char c)           { return false; }
     @Override public boolean scrolled(float a, float b) { return false; }
 
+    /** 参照 ArkPets：物理坐标 → 窗口 Y 坐标 */
+    private float getWindowY() {
+        return screenH - taskbarH - physics.getY() - Launcher.HEIGHT;
+    }
+
+    /** 参照 ArkPets updateWindow：用 windowPosition 插值后的位置应用到窗口 */
     private void applyWindowPos() {
-        int wx = (int) physics.getX();
-        int wy = (int) (screenH - taskbarH - physics.getY() - Launcher.HEIGHT);
+        int wx = (int) windowPosition.now().x;
+        int wy = (int) windowPosition.now().y;
         window.setPosition(wx, wy);
     }
 
