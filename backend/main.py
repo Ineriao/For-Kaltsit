@@ -16,10 +16,11 @@ from prompt import KALTSIT_SYSTEM_PROMPT
 client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
 
 # ── 静态资源路径 ────────────────────────────────────────────
-BASE_DIR = Path(__file__).parent.parent
-VOICE_DIR = BASE_DIR / "voice"
-MODEL_DIR = BASE_DIR / "Model"
-SPRITE_PATH = BASE_DIR / "立绘_凯尔希·思衡托_1.png"
+BASE_DIR   = Path(__file__).parent.parent
+ASSETS_DIR = BASE_DIR / "assets"
+VOICE_DIR  = ASSETS_DIR / "voice"          # assets/voice/凯尔希思衡托/*.wav
+MODEL_DIR  = ASSETS_DIR / "model"          # assets/model/*.webm
+SPRITE_PATH = ASSETS_DIR / "illustration" / "立绘_凯尔希·思衡托_1.png"
 
 
 @asynccontextmanager
@@ -43,8 +44,9 @@ if VOICE_DIR.exists():
     app.mount("/voice", StaticFiles(directory=str(VOICE_DIR)), name="voice")
 if MODEL_DIR.exists():
     app.mount("/model", StaticFiles(directory=str(MODEL_DIR)), name="model")
-# 挂载立绘所在目录
-app.mount("/assets", StaticFiles(directory=str(BASE_DIR)), name="assets")
+# 挂载 assets 目录（立绘、其他资源）
+if ASSETS_DIR.exists():
+    app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
 
 # ── 数据模型 ────────────────────────────────────────────────

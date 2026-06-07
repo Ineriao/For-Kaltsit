@@ -120,7 +120,7 @@ function saveAll() {
 }
 
 // ── 立绘 ──────────────────────────────────────────────────────
-const spriteUrl = 'http://127.0.0.1:8765/assets/%E7%AB%8B%E7%BB%98_%E5%87%AF%E5%B0%94%E5%B8%8C%C2%B7%E6%80%9D%E8%A1%A1%E6%89%98_1.png'
+const spriteUrl = 'http://127.0.0.1:8765/assets/illustration/%E7%AB%8B%E7%BB%98_%E5%87%AF%E5%B0%94%E5%B8%8C%C2%B7%E6%80%9D%E8%A1%A1%E6%89%98_1.png'
 const PK = 'kaltsit_sprite'
 // 坐标系原点：对应实际 x=-800, y=-700（立绘当前位置即 0,0）
 const ORIGIN = { x: -800, y: -700 }
