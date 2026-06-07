@@ -31,6 +31,9 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
     private int   dragStartMouseX = 0, dragStartMouseY = 0;
     private float dragStartPhysX  = 0, dragStartPhysY  = 0;
 
+    // 双击检测
+    private long  lastClickTime = 0;
+
     // 参照 ArkPets：windowPosition 缓动插值，拖动时 setToEnd() 立刻跳到目标
     private TransitionVector2 windowPosition;
 
@@ -172,8 +175,16 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
     private void onMouseDown() {
         // 穿透已由 render() 全局检测处理；能收到事件说明在不透明区域
         if (mouseButton == com.badlogic.gdx.Input.Buttons.LEFT) {
-            behavior.onTouch();
-            System.out.println("[Touch] click x=" + mouseX + " y=" + mouseY);
+            long now = System.currentTimeMillis();
+            if (now - lastClickTime < 400) {
+                // 双击：通知 Electron 展开对话界面
+                IpcClient.send("open_chat");
+                System.out.println("[Touch] double-click → open_chat");
+            } else {
+                behavior.onTouch();
+                System.out.println("[Touch] click x=" + mouseX + " y=" + mouseY);
+            }
+            lastClickTime = now;
         }
     }
 

@@ -134,10 +134,12 @@ ipcMain.on('mode-change', (_, mode) => {
     mainWindow.setContentSize(800, 800)
     mainWindow.setAlwaysOnTop(true)
     mainWindow.setResizable(false)
+    sendToPet('show')
   } else {
     mainWindow.setContentSize(500, 700)
     mainWindow.setAlwaysOnTop(false)
     mainWindow.setResizable(false)
+    sendToPet('hide')
   }
 })
 
@@ -169,3 +171,38 @@ ipcMain.on('pet-context-menu', () => {
   ])
   menu.popup({ window: mainWindow })
 })
+
+// ── Java 桌宠双向 Socket 通信 ──────────────────────────────────
+const net = require('net')
+const PET_LISTEN_PORT = 8767  // Electron 监听，Java 发消息到这里
+
+// Electron Socket 服务器：接收 Java 桌宠的指令
+const petSocketServer = net.createServer((socket) => {
+  socket.on('data', (data) => {
+    const cmd = data.toString().trim()
+    console.log('[PetIPC] 收到:', cmd)
+    if (cmd === 'open_chat') {
+      // 桌宠双击 → 展开对话界面
+      if (mainWindow) {
+        mainWindow.setContentSize(500, 700)
+        mainWindow.setAlwaysOnTop(false)
+        mainWindow.show()
+        mainWindow.webContents.send('open-chat')
+      }
+    }
+  })
+})
+
+petSocketServer.listen(PET_LISTEN_PORT, '127.0.0.1', () => {
+  console.log('[PetIPC] Electron Socket 服务器监听端口', PET_LISTEN_PORT)
+})
+
+/** 向 Java 桌宠发送指令 */
+function sendToPet(cmd) {
+  const client = new net.Socket()
+  client.connect(8766, '127.0.0.1', () => {
+    client.write(cmd + '\n')
+    client.destroy()
+  })
+  client.on('error', () => {}) // 桌宠未运行时静默失败
+}
