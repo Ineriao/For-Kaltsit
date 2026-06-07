@@ -16,6 +16,7 @@
 - PRTS 2.1 + 凯尔希动态自定义光标
 - 全局点击波纹动画（源石冰蓝发光圆环）
 - **Java libGDX 桌宠**：Spine 3.8 骨骼动画，原版物理引擎（重力/摩擦/弹跳），行为状态机（Relax/Sit/Sleep/Move/Special），Win32 置顶高于任务栏，像素级点击穿透
+- **双向连接**：双击桌宠自动唤起 AI 对话界面，关闭对话界面自动回到桌宠
 
 ## 技术栈
 
@@ -32,6 +33,11 @@
 ├── backend/       Python FastAPI + 凯尔希人设 System Prompt
 ├── kaltsit-pet/   Java libGDX 桌宠模块
 └── assets/        立绘、语音、Spine 骨骼、光标资源
+    ├── cursors/       PRTS 2.1 + 凯尔希动态光标
+    ├── illustration/  立绘 PNG
+    ├── model/         webm 透明动画
+    ├── spine/         Spine 骨骼文件
+    └── voice/         原声语音库
 ```
 
 ## 使用
@@ -50,22 +56,24 @@ cp backend/.env.example backend/.env
 # 启动后端
 cd backend && python main.py
 
-# 启动前端
+# 启动前端（开发模式）
 cd app && npm run dev
 
 # 启动 Java 桌宠（需要 JDK 17）
-# JAVA_HOME=C:/Program Files/Microsoft/jdk-17.0.17.10-hotspot
-cd kaltsit-pet && gradlew run
+# 设置 JAVA_HOME=C:\Program Files\Microsoft\jdk-17.x.x
+cd kaltsit-pet && gradlew jar
+java -jar build/libs/kaltsit-pet-1.0.0.jar
 ```
 
-## 待完成
+## 交互说明
 
-- 桌宠点击交互（InputProcessor / FBO 像素检测调试）
-- 桌宠位置对齐（physY 坐标系修正）
-- GPT-SoVITS 声库训练
-- Whisper STT 语音输入
-- 切换 DeepSeek API
-- 打包为 .exe
+| 操作 | 效果 |
+|------|------|
+| 单击桌宠 | 触发 Interact 动画 |
+| 双击桌宠 | 展开 AI 对话界面 |
+| 右键桌宠 | 菜单（展开对话/最小化/退出） |
+| 对话界面 ✕ | 隐藏对话界面，桌宠继续显示 |
+| 拖动桌宠 | 自由移动，松手后物理落地 |
 
 ## 注意
 

@@ -36,7 +36,6 @@ function createWindow() {
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5173')
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
@@ -144,7 +143,10 @@ ipcMain.on('mode-change', (_, mode) => {
 
 ipcMain.on('window-close', () => app.quit())
 ipcMain.on('window-minimize', () => mainWindow?.minimize())
-ipcMain.on('window-hide', () => mainWindow?.hide())
+ipcMain.on('window-hide', () => {
+  mainWindow?.hide()
+  sendToPet('show')  // 隐藏对话界面时通知 Java 桌宠重新显示
+})
 
 // 桌宠右键菜单
 ipcMain.on('pet-context-menu', () => {
@@ -181,12 +183,13 @@ const petSocketServer = net.createServer((socket) => {
     const cmd = data.toString().trim()
     console.log('[PetIPC] 收到:', cmd)
     if (cmd === 'open_chat') {
-      // 桌宠双击 → 展开对话界面
+      // 桌宠双击 → 展开对话界面，通知桌宠隐藏
       if (mainWindow) {
         mainWindow.setContentSize(500, 700)
         mainWindow.setAlwaysOnTop(false)
         mainWindow.show()
         mainWindow.webContents.send('open-chat')
+        sendToPet('hide')  // 桌宠进入后台，对话界面展开
       }
     }
   })
