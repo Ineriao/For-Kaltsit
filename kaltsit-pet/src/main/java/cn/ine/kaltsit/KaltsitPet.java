@@ -90,13 +90,13 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
         spine.render(batch, delta);
 
         // 渲染完后读 FBO 像素，更新穿透状态
-        boolean solid = spine.isPixelSolid(mouseX, mouseY);
+        // isPixelSolid 内部已做 Y 翻转，直接传 libGDX 原始坐标
+        boolean solid = isMouseAtSolidPixel();
         window.setMousePassthrough(!solid);
     }
 
-    /** 像素检测 — 与 ArkPets 一致 */
+    /** 像素检测：传入 libGDX 屏幕坐标（0=左上），内部统一做 Y 翻转 */
     private boolean isMouseAtSolidPixel() {
-        // mouseY 已经是 libGDX 坐标（0=顶部），Spine 渲染坐标 0=底部
         return spine.isPixelSolid(mouseX, Launcher.HEIGHT - mouseY - 1);
     }
 
