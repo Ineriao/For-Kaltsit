@@ -109,7 +109,8 @@ public class SpineModel {
         fboBatch.end();
         fbo.end();
 
-        // Pass 2：直接渲染到主帧缓冲（不 clear，让透明帧缓冲自然处理背景）
+        // Pass 2：清空主帧缓冲再渲染（清除残影）
+        ScreenUtils.clear(0, 0, 0, 0, true);
         screenBatch.setProjectionMatrix(mainCamera.combined);
         screenBatch.begin();
         renderer.draw(screenBatch, skeleton);
