@@ -84,11 +84,9 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
             }
         }
 
-        // 参照 ArkPets render() 第166-168行：
-        // windowPosition.reset(plane.getX(), windowY) → addProgress → updateWindow
-        windowPosition.reset(physics.getX(), getWindowY());
-        windowPosition.addProgress(delta);
-        applyWindowPos();
+        // 每帧都根据物理坐标更新窗口位置（不管是否拖动）
+        window.setPosition((int) physics.getX(),
+                (int) (screenH - taskbarH - physics.getY() - Launcher.HEIGHT));
 
         BehaviorSystem.State bs = behavior.getCurrent();
         boolean lowFloor = (bs == BehaviorSystem.State.SIT || bs == BehaviorSystem.State.SLEEP);
@@ -97,8 +95,10 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
         behavior.update(delta);
         spine.render(batch, delta);
 
-        // 方案B：每帧用全局鼠标位置检测穿透
-        if (!isMouseDragging) {
+        // 穿透：拖动中强制关闭，否则按像素检测
+        if (isMouseDragging) {
+            window.setMousePassthrough(false);
+        } else {
             int[] cur = window.getCursorPos();
             int[] win = window.getPosition();
             int localX = cur[0] - win[0];
@@ -125,11 +125,13 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
         mouseDeltaX = 0; lastDragDeltaX = 0;
         mouseButton = button;
         isMouseDown = true;
-        // 记录拖拽起始（绝对坐标跟随用）
-        dragStartMouseX = screenX;
-        dragStartMouseY = screenY;
-        dragStartPhysX  = physics.getX();
-        dragStartPhysY  = physics.getY();
+        // 起始坐标用 GetCursorPos（屏幕绝对坐标），与 onMouseDrag 保持一致
+        int[] cur = window.getCursorPos();
+        dragStartMouseX = cur[0];
+        dragStartMouseY = cur[1];
+        int[] winPos = window.getPosition();
+        dragStartPhysX  = winPos[0];
+        dragStartPhysY  = winPos[1];
         onMouseDown();
         return true;
     }
@@ -141,12 +143,11 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
         int dy = screenY - mouseY;
         mouseDeltaX = dx;
         mouseDeltaY = dy;
-        // 参照 ArkPets：累加方向一致的 delta
         lastDragDeltaX = dx * lastDragDeltaX <= 0 ? dx : lastDragDeltaX + dx;
         mouseX = screenX; mouseY = screenY;
         isMouseDragging = true;
         onMouseDrag();
-        return false; // 参照 ArkPets：返回 false 不消费
+        return false;
     }
 
     @Override
@@ -178,22 +179,16 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
 
     private void onMouseDrag() {
         if (mouseButton != com.badlogic.gdx.Input.Buttons.RIGHT) {
-            // 直接用窗口屏幕坐标跟随鼠标（最简单最准确）
-            // 拖动起始时记录的窗口左上角位置 + 鼠标总位移
-            int totalDx = mouseX - dragStartMouseX;
-            int totalDy = mouseY - dragStartMouseY;
-            float winX = dragStartPhysX + totalDx;           // 窗口左上角 X
-            float winY = (screenH - taskbarH - dragStartPhysY - Launcher.HEIGHT) + totalDy; // 窗口左上角 Y
-            // 直接设窗口位置，不走物理引擎
-            window.setPosition((int) winX, (int) winY);
-            windowPosition.reset(winX, winY);
-            windowPosition.setToEnd();
-            // 同步物理坐标（松手后物理接管）
-            float physX = winX;
-            float physY = screenH - taskbarH - winY - Launcher.HEIGHT;
-            physics.setPosition(physX, physY);
-            if (Math.abs(lastDragDeltaX) >= 4)
-                spine.setFacing((int) Math.signum(lastDragDeltaX));
+            // 用全局鼠标坐标（GetCursorPos），不用 GLFW 窗口内坐标
+            // GLFW 坐标在鼠标移出窗口时会被 clip，导致抖动
+            int[] cur = window.getCursorPos();
+            int totalDx = cur[0] - dragStartMouseX;
+            int totalDy = cur[1] - dragStartMouseY;
+            int newWinX = (int) dragStartPhysX + totalDx;
+            int newWinY = (int) dragStartPhysY + totalDy;
+            window.setPosition(newWinX, newWinY);
+            physics.setPosition((float) newWinX,
+                    screenH - taskbarH - newWinY - Launcher.HEIGHT);
         }
     }
 

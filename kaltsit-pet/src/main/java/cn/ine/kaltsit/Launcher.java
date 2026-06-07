@@ -8,7 +8,7 @@ public class Launcher {
     public static final String TITLE   = "KaltsitPet";
     public static final int    WIDTH   = 600;
     public static final int    HEIGHT  = 750;
-    public static final int    FPS     = 30;
+    public static final int    FPS     = 120;
 
     // Spine 模型路径（Building 基建模式）
     public static final String SKEL_PATH  = "D:/Kal'tsit/assets/spine/SpineModel/char_1052_kalts2/Building/build_char_1052_kalts2/build_char_1052_kalts2.skel";
