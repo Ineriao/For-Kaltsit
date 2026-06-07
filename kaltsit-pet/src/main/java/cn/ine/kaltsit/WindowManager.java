@@ -32,26 +32,32 @@ public class WindowManager {
         GLFW.glfwSetWindowAttrib(glfwHandle, GLFW.GLFW_MOUSE_PASSTHROUGH, enable ? 1 : 0);
     }
 
-    private static final HWND HWND_TOPMOST = new HWND(new com.sun.jna.Pointer(-1));
-    private static final int  SWP_FLAGS   = WinUser.SWP_NOSIZE | WinUser.SWP_NOMOVE | WinUser.SWP_NOACTIVATE;
+    private static final HWND HWND_TOPMOST  = new HWND(new com.sun.jna.Pointer(-1));
+    private static final HWND HWND_NOTOPMOST = new HWND(new com.sun.jna.Pointer(-2));
+    private static final int  SWP_FLAGS = WinUser.SWP_NOSIZE | WinUser.SWP_NOMOVE | WinUser.SWP_NOACTIVATE;
 
-    /** 设置窗口置顶（高于任务栏层级） */
+    /** 初始化窗口层级：高于任务栏但低于普通窗口 */
     public void setAlwaysOnTop(boolean enable) {
         if (hWnd == null) return;
-        // SetWindowPos 用 HWND_TOPMOST 才能真正超过任务栏层
-        User32.INSTANCE.SetWindowPos(hWnd, enable ? HWND_TOPMOST : null,
-                0, 0, 0, 0, SWP_FLAGS);
+        if (enable) {
+            // 先设 TOPMOST 确保在任务栏上方
+            User32.INSTANCE.SetWindowPos(hWnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_FLAGS);
+            // 再立即降为 NOTOPMOST，这样普通窗口激活后会挡住凯尔希
+            User32.INSTANCE.SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_FLAGS);
+        } else {
+            User32.INSTANCE.SetWindowPos(hWnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_FLAGS);
+        }
         // 不在任务栏显示
         int style = User32.INSTANCE.GetWindowLong(hWnd, WinUser.GWL_EXSTYLE);
         style |= WS_EX_TOOLWINDOW;
-        style &= ~0x00040000; // 移除 WS_EX_APPWINDOW
+        style &= ~0x00040000;
         User32.INSTANCE.SetWindowLong(hWnd, WinUser.GWL_EXSTYLE, style);
     }
 
-    /** 设置窗口位置，同时保持 TOPMOST 层级 */
+    /** 设置窗口位置（不强制置顶） */
     public void setPosition(int x, int y) {
         if (hWnd == null) return;
-        User32.INSTANCE.SetWindowPos(hWnd, HWND_TOPMOST, x, y,
+        User32.INSTANCE.SetWindowPos(hWnd, HWND_NOTOPMOST, x, y,
                 Launcher.WIDTH, Launcher.HEIGHT, WinUser.SWP_NOACTIVATE);
     }
 

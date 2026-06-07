@@ -49,10 +49,12 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
         System.out.println("[KaltsitPet] screen=" + screenW + "x" + screenH + " taskbar=" + taskbarH);
 
         physics.setObjSize(Launcher.WIDTH, Launcher.HEIGHT);
-        physics.setWorldArea(0, screenW, screenH, taskbarH);
-
-        physics.setPosition(screenW - Launcher.WIDTH - 20f, taskbarH);
+        float usableH = screenH - taskbarH;
+        physics.setWorldArea(usableH, screenW);
+        physics.setPosition(screenW - Launcher.WIDTH - 20f, 0f);
         applyWindowPos();
+        System.out.println("[KaltsitPet] 初始窗口位置: wx=" + (int)(screenW - Launcher.WIDTH - 20) +
+            " wy=" + (int)(screenH - taskbarH - 0 - Launcher.HEIGHT));
     }
 
     @Override
@@ -76,10 +78,11 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
             applyWindowPos();
         }
 
-        // Sit/Sleep 时地板下沉，applyWindowPos 也要跟着下移
+        // Sit/Sleep 时地板下沉 40px，让脚部动画完整显示
         BehaviorSystem.State bs = behavior.getCurrent();
         boolean lowFloor = (bs == BehaviorSystem.State.SIT || bs == BehaviorSystem.State.SLEEP);
-        physics.setWorldArea(0, screenW, screenH, lowFloor ? taskbarH - 40 : taskbarH);
+        float usableH = screenH - taskbarH;
+        physics.setWorldArea(lowFloor ? usableH + 40 : usableH, screenW);
 
         behavior.update(delta);
 
@@ -146,8 +149,9 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
 
     private void applyWindowPos() {
         int wx = (int) physics.getX();
-        // physY=taskbarH 时窗口底部贴任务栏顶；physY<taskbarH 时窗口可超出到任务栏内（置顶可见）
-        int wy = (int) (screenH - physics.getY() - Launcher.HEIGHT);
+        // physY=0 → 脚踩任务栏顶部，窗口底部在 screenH-taskbarH
+        // physY增大 → 窗口往上移
+        int wy = (int) (screenH - taskbarH - physics.getY() - Launcher.HEIGHT);
         window.setPosition(wx, wy);
     }
 

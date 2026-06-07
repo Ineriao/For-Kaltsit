@@ -11,8 +11,8 @@ public class Launcher {
     public static final int    FPS     = 30;
 
     // Spine 模型路径（Building 基建模式）
-    public static final String SKEL_PATH  = "D:/Kal'tsit/SpineModel/char_1052_kalts2/Building/build_char_1052_kalts2/build_char_1052_kalts2.skel";
-    public static final String ATLAS_PATH = "D:/Kal'tsit/SpineModel/char_1052_kalts2/Building/build_char_1052_kalts2/build_char_1052_kalts2.atlas";
+    public static final String SKEL_PATH  = "D:/Kal'tsit/assets/spine/SpineModel/char_1052_kalts2/Building/build_char_1052_kalts2/build_char_1052_kalts2.skel";
+    public static final String ATLAS_PATH = "D:/Kal'tsit/assets/spine/SpineModel/char_1052_kalts2/Building/build_char_1052_kalts2/build_char_1052_kalts2.atlas";
 
     // IPC 端口（与 Electron 通信）
     public static final int IPC_PORT = 8766;

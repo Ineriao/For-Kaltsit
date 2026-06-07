@@ -40,7 +40,9 @@ public class SpineModel {
         skelData = bin.readSkeletonData(skelFile);
 
         skeleton  = new Skeleton(skelData);
-        skeleton.setPosition(W / 2f, 60f);
+        // fboCamera 中心在 (W/2, H/2)，摄像机看 Y=[-H/2, H/2]
+        // 脚踩 FBO 底部 = Y = -H/2f
+        skeleton.setPosition(W / 2f, -H / 2f);
         skeleton.updateWorldTransform();
 
         AnimationStateData asd = new AnimationStateData(skelData);
@@ -83,12 +85,15 @@ public class SpineModel {
         catch (Exception e) { playAnimation(name, loop); }
     }
 
-    // 各动画状态的骨骼 Y 偏移（调整让动画完整显示在窗口内）
+    // 各动画状态的骨骼 Y 偏移
     private float skeletonOffsetY = 80f;
 
     public void setSkeletonOffsetY(float y) {
         skeletonOffsetY = y;
     }
+
+    /** 设置朝向，dir > 0 朝右，dir < 0 朝左 */
+    public void setFacing(int dir) {
         if (dir == 0) return;
         skeleton.setScaleX(dir > 0 ? Math.abs(skeleton.getScaleX()) : -Math.abs(skeleton.getScaleX()));
     }
