@@ -85,18 +85,19 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
 
         behavior.update(delta);
 
-        // SpineModel.render 内部管理 batch.begin/end，直接调用
+        // SpineModel.render 内部管理 batch.begin/end
         spine.render(batch, delta);
-
-        // 渲染完后读 FBO 像素，更新穿透状态
-        // isPixelSolid 内部已做 Y 翻转，直接传 libGDX 原始坐标
-        boolean solid = isMouseAtSolidPixel();
-        window.setMousePassthrough(!solid);
     }
 
     /** 像素检测：传入 libGDX 屏幕坐标（0=左上），内部统一做 Y 翻转 */
     private boolean isMouseAtSolidPixel() {
         return spine.isPixelSolid(mouseX, Launcher.HEIGHT - mouseY - 1);
+    }
+
+    /** 更新鼠标穿透状态（参照 ArkPets updateWindow/setTransparentMode） */
+    private void updatePassthrough() {
+        boolean solid = isMouseAtSolidPixel();
+        window.setMousePassthrough(!solid);
     }
 
     // ── InputProcessor ──────────────────────────────────────────
@@ -137,6 +138,8 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
     @Override
     public boolean mouseMoved(int screenX, int screenY) {
         mouseX = screenX; mouseY = screenY;
+        // 参照 ArkPets onMouseMoved：每次鼠标移动更新穿透状态
+        updatePassthrough();
         return false;
     }
 
