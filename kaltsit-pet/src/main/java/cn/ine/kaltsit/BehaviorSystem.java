@@ -32,8 +32,8 @@ public class BehaviorSystem {
         "Interact", // TOUCH
     };
 
-    private static final float[] DUR_MIN = { 10f, 8f, 15f, 3f, 3f, 4f, 0f };
-    private static final float[] DUR_MAX = { 25f, 20f, 40f, 8f, 8f, 8f, 0f };
+    private static final float[] DUR_MIN = { 10f, 8f, 15f, 3f, 3f, 4f, 3f };
+    private static final float[] DUR_MAX = { 25f, 20f, 40f, 8f, 8f, 8f, 5f };
 
     private final SpineModel spine;
     private final Random     rng = new Random();

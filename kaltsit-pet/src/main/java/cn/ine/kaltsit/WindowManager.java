@@ -32,11 +32,18 @@ public class WindowManager {
         }
     }
 
-    /** 设置鼠标穿透（透明像素不响应鼠标） */
+    /** 设置鼠标穿透（参照 ArkPets HWndCtrl.setTransparent） */
     public void setMousePassthrough(boolean enable) {
         if (glfwHandle == 0 || enable == passthrough) return;
         passthrough = enable;
         GLFW.glfwSetWindowAttrib(glfwHandle, GLFW.GLFW_MOUSE_PASSTHROUGH, enable ? 1 : 0);
+    }
+
+    /** 获取全局鼠标位置（屏幕绝对坐标），不依赖 GLFW 事件 */
+    public int[] getCursorPos() {
+        com.sun.jna.platform.win32.WinDef.POINT pt = new com.sun.jna.platform.win32.WinDef.POINT();
+        User32.INSTANCE.GetCursorPos(pt);
+        return new int[]{ pt.x, pt.y };
     }
 
     private static final HWND HWND_TOPMOST  = new HWND(new com.sun.jna.Pointer(-1));

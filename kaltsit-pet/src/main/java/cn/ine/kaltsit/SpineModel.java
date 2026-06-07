@@ -117,18 +117,18 @@ public class SpineModel {
         screenBatch.end();
     }
 
-    /** 像素检测：从 FBO 读取，Y 轴翻转 */
+    /** 像素检测：从 FBO 读取，Y 轴翻转（flipped_alpha 正确）*/
     public boolean isPixelSolid(int x, int y) {
         if (x < 0 || y < 0 || x >= W || y >= H) return false;
         try {
-            fbo.begin();
+            fbo.bind();
             Pixmap px = Pixmap.createFromFrameBuffer(x, H - y - 1, 1, 1);
-            fbo.end();
-            int pixel = px.getPixel(0, 0);
+            com.badlogic.gdx.graphics.glutils.FrameBuffer.unbind();
+            int alpha = px.getPixel(0, 0) & 0xFF;
             px.dispose();
-            return (pixel & 0xFF) > 10;
+            return alpha > 10;
         } catch (Exception e) {
-            return true;
+            return false;
         }
     }
 
