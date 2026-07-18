@@ -21,7 +21,8 @@ public class IpcServer {
         running = true;
         thread  = new Thread(() -> {
             try {
-                server = new ServerSocket(port);
+                server = new ServerSocket();
+                server.bind(new InetSocketAddress("127.0.0.1", port));
                 System.out.println("[IPC] 监听端口 " + port);
                 while (running) {
                     Socket client = server.accept();
@@ -36,11 +37,14 @@ public class IpcServer {
     }
 
     private void handleClient(Socket client) {
-        try (BufferedReader r = new BufferedReader(new InputStreamReader(client.getInputStream()))) {
+        try (client;
+             BufferedReader r = new BufferedReader(new InputStreamReader(client.getInputStream()));
+             PrintWriter writer = new PrintWriter(client.getOutputStream(), true)) {
             String line;
             while ((line = r.readLine()) != null) {
                 System.out.println("[IPC] 收到指令: " + line);
-                pet.onIpcCommand(line);
+                if ("ping".equals(line.trim())) writer.println("kaltsit-pet");
+                else pet.onIpcCommand(line);
             }
         } catch (IOException e) {
             System.err.println("[IPC] 客户端断开: " + e.getMessage());

@@ -1,23 +1,49 @@
-import os
-import json
 import asyncio
-from pathlib import Path
+import os
+import re
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-import anthropic
-from fastapi import FastAPI, HTTPException
+import httpx
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field
 
+from database import Database
 from prompt import KALTSIT_SYSTEM_PROMPT
+from rag import RagService
 
-# ── API 客户端 ──────────────────────────────────────────────
-client = anthropic.Anthropic(api_key=os.environ.get("ANTHROPIC_API_KEY", ""))
+load_dotenv(Path(__file__).with_name(".env"))
+config_dir = os.environ.get("KALTSIT_CONFIG_DIR", "").strip()
+if config_dir:
+    load_dotenv(Path(config_dir).expanduser() / ".env", override=True)
+
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
+DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
+DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash").strip()
+database = Database()
+rag_service = RagService(database)
+
+ALLOWED_ACTIONS = {
+    "RELAX",
+    "SIT",
+    "SLEEP",
+    "MOVE_LEFT",
+    "MOVE_RIGHT",
+    "SPECIAL",
+    "TOUCH",
+}
+ACTION_INSTRUCTION = """
+根据本轮回复的语气，在回复最后单独输出一个动作标签：<action>动作名</action>。
+动作名只能是 RELAX、SIT、SLEEP、MOVE_LEFT、MOVE_RIGHT、SPECIAL、TOUCH 之一。
+标签不会展示给用户，不要解释标签，不要输出其他指令。
+""".strip()
 
 # ── 静态资源路径 ────────────────────────────────────────────
-BASE_DIR   = Path(__file__).parent.parent
-ASSETS_DIR = BASE_DIR / "assets"
+BASE_DIR = Path(__file__).resolve().parent.parent
+ASSETS_DIR = Path(os.environ.get("KALTSIT_ASSETS_DIR", BASE_DIR / "assets")).expanduser().resolve()
 VOICE_DIR  = ASSETS_DIR / "voice"          # assets/voice/凯尔希思衡托/*.wav
 MODEL_DIR  = ASSETS_DIR / "model"          # assets/model/*.webm
 SPRITE_PATH = ASSETS_DIR / "illustration" / "立绘_凯尔希·思衡托_1.png"
@@ -25,9 +51,18 @@ SPRITE_PATH = ASSETS_DIR / "illustration" / "立绘_凯尔希·思衡托_1.png"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    database.initialize()
+    app.state.deepseek_client = httpx.AsyncClient(
+        base_url=DEEPSEEK_BASE_URL,
+        timeout=httpx.Timeout(120.0, connect=10.0),
+        headers={"Authorization": f"Bearer {DEEPSEEK_API_KEY}"},
+    )
     print("[凯尔希] 后端启动 :8765")
-    yield
-    print("[凯尔希] 后端关闭")
+    try:
+        yield
+    finally:
+        await app.state.deepseek_client.aclose()
+        print("[凯尔希] 后端关闭")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -56,15 +91,30 @@ class Message(BaseModel):
 
 class ChatRequest(BaseModel):
     messages: list[Message]
+    session_id: str | None = None
+
+
+class SessionCreate(BaseModel):
+    title: str = "新对话"
+    initial_message: str | None = None
+
+
+class SessionRename(BaseModel):
+    title: str
+
+
+class KnowledgeDocumentCreate(BaseModel):
+    title: str = Field(min_length=1, max_length=160)
+    source_type: str = Field(min_length=1, max_length=16)
+    content: str = Field(min_length=1, max_length=5_242_880)
 
 
 # ── 接口 ────────────────────────────────────────────────────
 @app.post("/chat")
 async def chat(req: ChatRequest):
-    if not client.api_key:
-        raise HTTPException(500, "ANTHROPIC_API_KEY 未配置")
+    if not DEEPSEEK_API_KEY:
+        raise HTTPException(503, "DEEPSEEK_API_KEY 未配置")
 
-    # 转换为 Anthropic messages 格式
     history = [
         {"role": m.role, "content": m.text}
         for m in req.messages
@@ -75,24 +125,164 @@ async def chat(req: ChatRequest):
     if not history or history[-1]["role"] != "user":
         raise HTTPException(400, "最后一条消息必须是 user")
 
-    response = client.messages.create(
-        model="claude-sonnet-4-6",
-        max_tokens=1024,
-        system=KALTSIT_SYSTEM_PROMPT,
-        messages=history,
-    )
+    if req.session_id:
+        try:
+            database.append_message(req.session_id, "user", history[-1]["content"])
+        except KeyError as error:
+            raise HTTPException(404, "会话不存在") from error
 
-    reply = response.content[0].text
-    return {"reply": reply}
+    sources = await asyncio.to_thread(rag_service.retrieve, history[-1]["content"])
+    system_prompt = build_system_prompt(sources)
+    messages = [{"role": "system", "content": system_prompt}, *history]
+    try:
+        response = await app.state.deepseek_client.post(
+            "/chat/completions",
+            json={
+                "model": DEEPSEEK_MODEL,
+                "messages": messages,
+                "thinking": {"type": "disabled"},
+                "max_tokens": 1024,
+                "stream": False,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        content = data["choices"][0]["message"]["content"]
+        if not isinstance(content, str):
+            raise TypeError("response content is not text")
+        reply, action = parse_assistant_response(content)
+    except httpx.TimeoutException as error:
+        raise HTTPException(504, "DeepSeek 响应超时") from error
+    except httpx.HTTPStatusError as error:
+        status = error.response.status_code
+        print(f"[DeepSeek] 上游请求失败 status={status}")
+        raise HTTPException(502, f"DeepSeek 上游请求失败（{status}）") from error
+    except (httpx.RequestError, KeyError, IndexError, TypeError, ValueError) as error:
+        print(f"[DeepSeek] 响应异常: {error}")
+        raise HTTPException(502, "DeepSeek 返回了无效响应") from error
+
+    if not reply:
+        raise HTTPException(502, "DeepSeek 返回了空响应")
+    response_sources = [
+        {
+            "document_id": source["document_id"],
+            "title": source["title"],
+            "position": source["position"],
+            "score": source["score"],
+        }
+        for source in sources
+    ]
+    if req.session_id:
+        database.append_message(req.session_id, "assistant", reply, response_sources)
+    return {
+        "reply": reply,
+        "session_id": req.session_id,
+        "sources": response_sources,
+        "action": action,
+    }
+
+
+@app.post("/sessions", status_code=201)
+async def create_session(request: SessionCreate):
+    return database.create_session(request.title, request.initial_message)
+
+
+@app.get("/sessions")
+async def list_sessions():
+    return {"sessions": database.list_sessions()}
+
+
+@app.get("/sessions/{session_id}/messages")
+async def get_session_messages(session_id: str):
+    if not database.get_session(session_id):
+        raise HTTPException(404, "会话不存在")
+    return {"messages": database.get_messages(session_id)}
+
+
+@app.patch("/sessions/{session_id}")
+async def rename_session(session_id: str, request: SessionRename):
+    session = database.rename_session(session_id, request.title)
+    if not session:
+        raise HTTPException(404, "会话不存在或标题为空")
+    return session
+
+
+@app.delete("/sessions/{session_id}", status_code=204)
+async def delete_session(session_id: str):
+    if not database.delete_session(session_id):
+        raise HTTPException(404, "会话不存在")
+    return Response(status_code=204)
+
+
+@app.get("/rag/status")
+async def rag_status():
+    return rag_service.status()
+
+
+@app.post("/rag/model/download")
+async def download_rag_model():
+    try:
+        return await asyncio.to_thread(rag_service.download_model)
+    except Exception as error:
+        print(f"[RAG] 模型下载失败: {error}")
+        raise HTTPException(502, "向量模型下载失败，请检查网络后重试") from error
+
+
+@app.post("/rag/model/reload")
+async def reload_rag_model():
+    try:
+        return await asyncio.to_thread(rag_service.reload_model)
+    except Exception as error:
+        print(f"[RAG] 模型加载失败: {error}", flush=True)
+        detail = "手动导入的向量模型无效"
+        if os.environ.get("KALTSIT_DIAGNOSTICS") == "1":
+            detail = f"{detail}: {type(error).__name__}: {error}"
+        raise HTTPException(400, detail) from error
+
+
+@app.get("/knowledge/documents")
+async def list_knowledge_documents():
+    return {"documents": database.list_documents()}
+
+
+@app.post("/knowledge/documents", status_code=201)
+async def import_knowledge_document(request: KnowledgeDocumentCreate):
+    try:
+        document = await asyncio.to_thread(
+            rag_service.import_document,
+            request.title,
+            request.source_type,
+            request.content,
+        )
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    except Exception as error:
+        print(f"[RAG] 文件索引失败: {error}")
+        raise HTTPException(500, "文件索引失败") from error
+    return document
+
+
+@app.delete("/knowledge/documents/{document_id}", status_code=204)
+async def delete_knowledge_document(document_id: str):
+    if not rag_service.delete_document(document_id):
+        raise HTTPException(404, "资料不存在")
+    return Response(status_code=204)
 
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    return {
+        "service": "kaltsit-backend",
+        "status": "ok",
+        "provider": "deepseek",
+        "model": DEEPSEEK_MODEL,
+        "configured": bool(DEEPSEEK_API_KEY),
+        "assets": ASSETS_DIR.exists(),
+    }
 
 
-@app.get("/assets")
-async def assets():
+@app.get("/resource-manifest")
+async def resource_manifest():
     """返回可用资源列表"""
     voice_files = {
         folder: [f.name for f in (VOICE_DIR / folder).iterdir() if f.suffix == ".wav"]
@@ -105,6 +295,29 @@ async def assets():
         "models": model_files,
         "sprite": SPRITE_PATH.exists()
     }
+
+
+def build_system_prompt(sources: list[dict]) -> str:
+    context = ""
+    if sources:
+        blocks = [
+            f"[{index}] {source['title']}\n{source['content']}"
+            for index, source in enumerate(sources, start=1)
+        ]
+        context = (
+            "\n\n以下是本地知识库检索结果。仅在与问题相关时使用；"
+            "资料与既有设定冲突时，明确指出不确定性。\n\n"
+            + "\n\n".join(blocks)
+        )
+    return f"{KALTSIT_SYSTEM_PROMPT}{context}\n\n{ACTION_INSTRUCTION}"
+
+
+def parse_assistant_response(content: str) -> tuple[str, str]:
+    matches = re.findall(r"<action>\s*([A-Z_]+)\s*</action>", content, flags=re.IGNORECASE)
+    candidate = matches[-1].upper() if matches else "RELAX"
+    action = candidate if candidate in ALLOWED_ACTIONS else "RELAX"
+    reply = re.sub(r"\s*<action>\s*[A-Z_]+\s*</action>\s*", "", content, flags=re.IGNORECASE).strip()
+    return reply, action
 
 
 if __name__ == "__main__":

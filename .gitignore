@@ -8,6 +8,13 @@ venv/
 # 构建产物
 dist/
 dist-electron/
+dist-electron-final/
+dist-electron-release/
+dist-electron-onefile/
+dist-electron-final-v2/
+dist-electron-final-v4/
+dist-electron-final-v6/
+dist-electron-final-v7/
 app/dist/
 kaltsit-pet/build/
 kaltsit-pet/.gradle/
@@ -15,6 +22,33 @@ kaltsit-pet/.gradle/
 # 密钥（绝对不提交）
 .env
 backend/.env
+backend/.data/
+backend/.verification-data/
+backend/.verification-data-packaged/
+backend/.verification-data-onefile/
+backend/.verification-data-v2/
+backend/.verification-data-v3/
+backend/.verification-data-v4/
+backend/.verification-data-v5/
+backend/.build-venv/
+backend/.build-venv311/
+backend/build-pyinstaller/
+backend/dist/
+backend/build-pyinstaller-onefile/
+backend/dist-onefile/
+backend/build-pyinstaller-onefile-v2/
+backend/dist-onefile-v2/
+backend/build-pyinstaller-onefile-v3/
+backend/dist-onefile-v3/
+backend/build-pyinstaller-onefile-v4/
+backend/dist-onefile-v4/
+backend/build-pyinstaller-onefile-v5/
+backend/dist-onefile-v5/
+backend/build-pyinstaller-onefile-v6/
+backend/dist-onefile-v6/
+.build-tools/
+*.db-wal
+*.db-shm
 
 # 大文件资源
 *.wav
@@ -38,5 +72,4 @@ app/public/cursors/Kaltsit-Link.ani
 .DS_Store
 Thumbs.db
 app/electron-31.7.7.tgz
-app/package-lock.json
 *.code-workspace

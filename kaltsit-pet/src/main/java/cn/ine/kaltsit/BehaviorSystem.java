@@ -76,6 +76,23 @@ public class BehaviorSystem {
         touchPending = true;
     }
 
+    public boolean onExternalAction(String action) {
+        State target = switch (action) {
+            case "RELAX" -> State.RELAX;
+            case "SIT" -> State.SIT;
+            case "SLEEP" -> State.SLEEP;
+            case "MOVE_LEFT" -> State.MOVE_L;
+            case "MOVE_RIGHT" -> State.MOVE_R;
+            case "SPECIAL" -> State.SPECIAL;
+            case "TOUCH" -> State.TOUCH;
+            default -> null;
+        };
+        if (target == null) return false;
+        touchPending = false;
+        enterState(target);
+        return true;
+    }
+
     /** 当前移动方向：-1 左，0 静止，+1 右 */
     public int getMoveDir() {
         return (current == State.MOVE_L) ? -1 : (current == State.MOVE_R) ? 1 : 0;

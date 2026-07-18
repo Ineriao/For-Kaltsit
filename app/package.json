@@ -2,29 +2,61 @@
   "name": "kaltsit-ai",
   "version": "1.0.0",
   "description": "凯尔希·思衡托 AI 助手",
+  "author": "Ine",
   "main": "electron/main.js",
   "scripts": {
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
-    "build": "vite build && electron-builder",
+    "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-backend.ps1",
+    "build:pet": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-pet-runtime.ps1",
+    "build:runtime": "npm run build:backend && npm run build:pet",
+    "build:ui": "vite build",
+    "build": "npm run build:runtime && npm run build:ui && electron-builder",
+    "package": "npm run build:ui && electron-builder",
     "electron": "electron ."
   },
   "dependencies": {
     "axios": "^1.7.2"
   },
   "devDependencies": {
-    "@vitejs/plugin-vue": "^5.0.4",
+    "@vitejs/plugin-vue": "^6.0.8",
     "concurrently": "^8.2.2",
-    "electron": "^31.0.0",
-    "electron-builder": "^24.13.3",
-    "vite": "^5.3.1",
+    "electron": "^43.1.1",
+    "electron-builder": "^26.15.3",
+    "vite": "^8.1.5",
     "vue": "^3.4.29",
     "wait-on": "^7.2.0"
   },
   "build": {
     "appId": "com.ine.kaltsit",
     "productName": "凯尔希",
+    "artifactName": "${productName}-Setup-${version}.${ext}",
+    "asar": true,
+    "electronDist": "node_modules/electron/dist",
     "directories": { "output": "dist-electron" },
-    "win": { "target": "nsis", "icon": "public/icon.ico" },
-    "files": ["dist/**", "electron/**", "public/**"]
+    "win": {
+      "target": "nsis"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "files": ["dist/**", "electron/**", "public/**"],
+    "extraResources": [
+      {
+        "from": "../backend/dist-onefile-v6/kaltsit-backend.exe",
+        "to": "runtime/backend/kaltsit-backend.exe"
+      },
+      {
+        "from": "../kaltsit-pet/build/libs/kaltsit-pet-1.0.0.jar",
+        "to": "kaltsit-pet/kaltsit-pet-1.0.0.jar"
+      },
+      {
+        "from": "../kaltsit-pet/build/runtime",
+        "to": "runtime/java"
+      }
+    ]
   }
 }

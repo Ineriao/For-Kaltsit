@@ -231,7 +231,12 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
 
     public void onIpcCommand(String cmd) {
         Gdx.app.postRunnable(() -> {
-            switch (cmd.trim()) {
+            String command = cmd.trim();
+            if (command.startsWith("action:")) {
+                behavior.onExternalAction(command.substring("action:".length()));
+                return;
+            }
+            switch (command) {
                 case "show"  -> window.setVisible(true);
                 case "hide"  -> window.setVisible(false);
                 case "quit"  -> Gdx.app.exit();
