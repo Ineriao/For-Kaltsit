@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -48,12 +49,27 @@ class Database:
                 CREATE INDEX IF NOT EXISTS idx_messages_session
                 ON messages(session_id, id);
 
+                CREATE TABLE IF NOT EXISTS knowledge_collections (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE COLLATE NOCASE,
+                    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS documents (
                     id TEXT PRIMARY KEY,
+                    collection_id TEXT REFERENCES knowledge_collections(id) ON DELETE SET NULL,
                     title TEXT NOT NULL,
                     source_type TEXT NOT NULL,
+                    source_path TEXT,
+                    source_hash TEXT NOT NULL DEFAULT '',
+                    source_modified_at TEXT,
+                    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
                     chunk_count INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL
+                    metadata_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS knowledge_chunks (
@@ -61,6 +77,9 @@ class Database:
                     document_id TEXT NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
                     position INTEGER NOT NULL,
                     content TEXT NOT NULL,
+                    locator_text TEXT NOT NULL DEFAULT '',
+                    locator_json TEXT NOT NULL DEFAULT '{}',
+                    content_hash TEXT NOT NULL DEFAULT '',
                     embedding BLOB,
                     embedding_dim INTEGER NOT NULL DEFAULT 0
                 );
@@ -94,6 +113,7 @@ class Database:
                 );
                 """
             )
+            self._migrate_knowledge_schema(connection)
 
     def create_session(self, title: str, initial_message: str | None = None) -> dict:
         session_id = str(uuid.uuid4())
@@ -208,38 +228,155 @@ class Database:
             cursor = connection.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
         return cursor.rowcount > 0
 
-    def create_document(self, title: str, source_type: str, chunks: list[str]) -> dict:
+    def create_document(
+        self,
+        title: str,
+        source_type: str,
+        chunks: list[dict],
+        collection_id: str = "default",
+        source_path: str | None = None,
+        source_hash: str = "",
+        source_modified_at: str | None = None,
+        metadata: dict | None = None,
+    ) -> dict:
         document_id = str(uuid.uuid4())
         timestamp = utc_now()
         normalized_title = title.strip()[:160] or "未命名资料"
         normalized_type = source_type.strip().lower()[:16] or "txt"
         with self.connect() as connection:
+            self._require_collection(connection, collection_id)
             connection.execute(
                 """
-                INSERT INTO documents(id, title, source_type, chunk_count, created_at)
-                VALUES (?, ?, ?, ?, ?)
+                INSERT INTO documents(
+                    id, collection_id, title, source_type, source_path, source_hash,
+                    source_modified_at, chunk_count, metadata_json, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (document_id, normalized_title, normalized_type, len(chunks), timestamp),
+                (
+                    document_id,
+                    collection_id,
+                    normalized_title,
+                    normalized_type,
+                    source_path,
+                    source_hash,
+                    source_modified_at,
+                    len(chunks),
+                    json.dumps(metadata or {}, ensure_ascii=False),
+                    timestamp,
+                    timestamp,
+                ),
             )
-            connection.executemany(
-                """
-                INSERT INTO knowledge_chunks(document_id, position, content)
-                VALUES (?, ?, ?)
-                """,
-                ((document_id, position, content) for position, content in enumerate(chunks)),
-            )
+            self._insert_knowledge_chunks(connection, document_id, normalized_title, chunks)
         return self.get_document(document_id)
+
+    def upsert_document(
+        self,
+        title: str,
+        source_type: str,
+        chunks: list[dict],
+        collection_id: str = "default",
+        source_path: str | None = None,
+        source_hash: str = "",
+        source_modified_at: str | None = None,
+        metadata: dict | None = None,
+    ) -> tuple[dict, str]:
+        normalized_path = source_path.strip()[:1024] if source_path and source_path.strip() else None
+        if not normalized_path:
+            document = self.create_document(
+                title,
+                source_type,
+                chunks,
+                collection_id,
+                None,
+                source_hash,
+                source_modified_at,
+                metadata,
+            )
+            return document, "created"
+
+        timestamp = utc_now()
+        normalized_title = title.strip()[:160] or "未命名资料"
+        normalized_type = source_type.strip().lower()[:16] or "txt"
+        with self.connect() as connection:
+            self._require_collection(connection, collection_id)
+            existing = connection.execute(
+                """
+                SELECT id, source_hash FROM documents
+                WHERE collection_id = ? AND source_path = ?
+                """,
+                (collection_id, normalized_path),
+            ).fetchone()
+            if existing and source_hash and existing["source_hash"] == source_hash:
+                document_id = existing["id"]
+                connection.execute(
+                    """
+                    UPDATE documents SET source_modified_at = ?, updated_at = ? WHERE id = ?
+                    """,
+                    (source_modified_at, timestamp, document_id),
+                )
+                status = "unchanged"
+            elif existing:
+                document_id = existing["id"]
+                connection.execute("DELETE FROM knowledge_fts WHERE document_id = ?", (document_id,))
+                connection.execute("DELETE FROM knowledge_chunks WHERE document_id = ?", (document_id,))
+                connection.execute(
+                    """
+                    UPDATE documents SET title = ?, source_type = ?, source_hash = ?,
+                        source_modified_at = ?, chunk_count = ?, metadata_json = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        normalized_title,
+                        normalized_type,
+                        source_hash,
+                        source_modified_at,
+                        len(chunks),
+                        json.dumps(metadata or {}, ensure_ascii=False),
+                        timestamp,
+                        document_id,
+                    ),
+                )
+                self._insert_knowledge_chunks(connection, document_id, normalized_title, chunks)
+                status = "updated"
+            else:
+                document_id = str(uuid.uuid4())
+                connection.execute(
+                    """
+                    INSERT INTO documents(
+                        id, collection_id, title, source_type, source_path, source_hash,
+                        source_modified_at, chunk_count, metadata_json, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        document_id,
+                        collection_id,
+                        normalized_title,
+                        normalized_type,
+                        normalized_path,
+                        source_hash,
+                        source_modified_at,
+                        len(chunks),
+                        json.dumps(metadata or {}, ensure_ascii=False),
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+                self._insert_knowledge_chunks(connection, document_id, normalized_title, chunks)
+                status = "created"
+        return self.get_document(document_id), status
 
     def get_document(self, document_id: str) -> dict | None:
         with self.connect() as connection:
             row = connection.execute(
                 """
-                SELECT id, title, source_type, chunk_count, created_at
+                SELECT id, collection_id, title, source_type, source_path, source_hash,
+                       source_modified_at, enabled, chunk_count, metadata_json,
+                       created_at, updated_at
                 FROM documents WHERE id = ?
                 """,
                 (document_id,),
             ).fetchone()
-        return dict(row) if row else None
+        return self._document_from_row(row) if row else None
 
     def list_documents(self) -> list[dict]:
         with self.connect() as connection:
@@ -247,21 +384,39 @@ class Database:
                 """
                 SELECT
                     d.id,
+                    d.collection_id,
+                    c0.name AS collection_name,
                     d.title,
                     d.source_type,
+                    d.source_path,
+                    d.source_hash,
+                    d.source_modified_at,
+                    d.enabled,
                     d.chunk_count,
+                    d.metadata_json,
                     d.created_at,
+                    d.updated_at,
                     SUM(CASE WHEN c.embedding IS NOT NULL THEN 1 ELSE 0 END) AS indexed_count
                 FROM documents d
+                LEFT JOIN knowledge_collections c0 ON c0.id = d.collection_id
                 LEFT JOIN knowledge_chunks c ON c.document_id = d.id
                 GROUP BY d.id
-                ORDER BY d.created_at DESC
+                ORDER BY d.updated_at DESC
                 """
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._document_from_row(row) for row in rows]
+
+    def set_document_enabled(self, document_id: str, enabled: bool) -> dict | None:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE documents SET enabled = ?, updated_at = ? WHERE id = ?",
+                (int(enabled), utc_now(), document_id),
+            )
+        return self.get_document(document_id) if cursor.rowcount else None
 
     def delete_document(self, document_id: str) -> bool:
         with self.connect() as connection:
+            connection.execute("DELETE FROM knowledge_fts WHERE document_id = ?", (document_id,))
             cursor = connection.execute("DELETE FROM documents WHERE id = ?", (document_id,))
         return cursor.rowcount > 0
 
@@ -269,12 +424,13 @@ class Database:
         with self.connect() as connection:
             rows = connection.execute(
                 """
-                SELECT id, document_id, position, content, embedding, embedding_dim
+                SELECT id, document_id, position, content, locator_text, locator_json,
+                       content_hash, embedding, embedding_dim
                 FROM knowledge_chunks WHERE document_id = ? ORDER BY position
                 """,
                 (document_id,),
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._chunk_from_row(row) for row in rows]
 
     def list_knowledge_chunks(self) -> list[dict]:
         with self.connect() as connection:
@@ -285,15 +441,50 @@ class Database:
                     c.document_id,
                     c.position,
                     c.content,
+                    c.locator_text,
+                    c.locator_json,
+                    c.content_hash,
                     c.embedding,
                     c.embedding_dim,
-                    d.title
+                    d.title,
+                    d.collection_id,
+                    g.name AS collection_name
                 FROM knowledge_chunks c
                 JOIN documents d ON d.id = c.document_id
-                ORDER BY d.created_at DESC, c.position
+                JOIN knowledge_collections g ON g.id = d.collection_id
+                WHERE d.enabled = 1 AND g.enabled = 1
+                ORDER BY d.updated_at DESC, c.position
                 """
             ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._chunk_from_row(row) for row in rows]
+
+    def search_knowledge_fts(self, query: str, limit: int = 24) -> list[dict]:
+        terms = self._fts_terms(query)
+        if not terms:
+            return []
+        expression = " OR ".join(f'"{term}"' for term in terms[:16])
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT c.id, bm25(knowledge_fts, 1.0, 0.2, 0.1) AS rank,
+                       c.document_id, c.position, c.content, c.locator_text,
+                       c.locator_json, c.content_hash, c.embedding, c.embedding_dim,
+                       d.title, d.collection_id, g.name AS collection_name
+                FROM knowledge_fts f
+                JOIN knowledge_chunks c ON c.id = f.chunk_id
+                JOIN documents d ON d.id = c.document_id
+                JOIN knowledge_collections g ON g.id = d.collection_id
+                WHERE knowledge_fts MATCH ? AND d.enabled = 1 AND g.enabled = 1
+                ORDER BY rank LIMIT ?
+                """,
+                (expression, max(1, min(limit, 100))),
+            ).fetchall()
+        results = []
+        for row in rows:
+            chunk = self._chunk_from_row(row)
+            chunk["fts_rank"] = float(row["rank"])
+            results.append(chunk)
+        return results
 
     def update_chunk_embeddings(self, embeddings: list[tuple[int, bytes, int]]) -> None:
         if not embeddings:
@@ -305,6 +496,68 @@ class Database:
                 """,
                 ((blob, dimension, chunk_id) for chunk_id, blob, dimension in embeddings),
             )
+
+    def create_collection(self, name: str) -> dict:
+        normalized = name.strip()[:60]
+        if not normalized:
+            raise ValueError("知识分组名称不能为空")
+        collection_id = str(uuid.uuid4())
+        timestamp = utc_now()
+        with self.connect() as connection:
+            try:
+                connection.execute(
+                    """
+                    INSERT INTO knowledge_collections(id, name, enabled, created_at, updated_at)
+                    VALUES (?, ?, 1, ?, ?)
+                    """,
+                    (collection_id, normalized, timestamp, timestamp),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError("同名知识分组已存在") from error
+        return self.get_collection(collection_id)
+
+    def get_collection(self, collection_id: str) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT g.id, g.name, g.enabled, g.created_at, g.updated_at,
+                       COUNT(d.id) AS document_count
+                FROM knowledge_collections g
+                LEFT JOIN documents d ON d.collection_id = g.id
+                WHERE g.id = ? GROUP BY g.id
+                """,
+                (collection_id,),
+            ).fetchone()
+        return self._collection_from_row(row) if row else None
+
+    def list_collections(self) -> list[dict]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT g.id, g.name, g.enabled, g.created_at, g.updated_at,
+                       COUNT(d.id) AS document_count
+                FROM knowledge_collections g
+                LEFT JOIN documents d ON d.collection_id = g.id
+                GROUP BY g.id ORDER BY CASE WHEN g.id = 'default' THEN 0 ELSE 1 END, g.created_at
+                """
+            ).fetchall()
+        return [self._collection_from_row(row) for row in rows]
+
+    def update_collection(self, collection_id: str, name: str, enabled: bool) -> dict | None:
+        normalized = name.strip()[:60]
+        if not normalized:
+            raise ValueError("知识分组名称不能为空")
+        with self.connect() as connection:
+            try:
+                cursor = connection.execute(
+                    """
+                    UPDATE knowledge_collections SET name = ?, enabled = ?, updated_at = ? WHERE id = ?
+                    """,
+                    (normalized, int(enabled), utc_now(), collection_id),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError("同名知识分组已存在") from error
+        return self.get_collection(collection_id) if cursor.rowcount else None
 
     def list_memories(self, enabled_only: bool = False, limit: int = 100) -> list[dict]:
         where = "WHERE enabled = 1" if enabled_only else ""
@@ -465,7 +718,7 @@ class Database:
     def diagnostics(self) -> dict:
         counts = {}
         with self.connect() as connection:
-            for table in ("sessions", "messages", "memories", "documents", "knowledge_chunks"):
+            for table in ("sessions", "messages", "memories", "knowledge_collections", "documents", "knowledge_chunks"):
                 counts[table] = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
             integrity = connection.execute("PRAGMA quick_check").fetchone()[0]
         return {
@@ -489,6 +742,182 @@ class Database:
         memory = dict(row)
         memory["enabled"] = bool(memory["enabled"])
         return memory
+
+    @staticmethod
+    def _document_from_row(row: sqlite3.Row) -> dict:
+        document = dict(row)
+        document["enabled"] = bool(document.get("enabled", 1))
+        try:
+            document["metadata"] = json.loads(document.pop("metadata_json", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            document["metadata"] = {}
+        return document
+
+    @staticmethod
+    def _chunk_from_row(row: sqlite3.Row) -> dict:
+        chunk = dict(row)
+        try:
+            chunk["locator"] = json.loads(chunk.pop("locator_json", "{}"))
+        except (json.JSONDecodeError, TypeError):
+            chunk["locator"] = {}
+        return chunk
+
+    @staticmethod
+    def _collection_from_row(row: sqlite3.Row) -> dict:
+        collection = dict(row)
+        collection["enabled"] = bool(collection["enabled"])
+        return collection
+
+    def _migrate_knowledge_schema(self, connection: sqlite3.Connection) -> None:
+        timestamp = utc_now()
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO knowledge_collections(id, name, enabled, created_at, updated_at)
+            VALUES ('default', '默认知识库', 1, ?, ?)
+            """,
+            (timestamp, timestamp),
+        )
+        document_columns = {
+            "collection_id": "TEXT",
+            "source_path": "TEXT",
+            "source_hash": "TEXT NOT NULL DEFAULT ''",
+            "source_modified_at": "TEXT",
+            "enabled": "INTEGER NOT NULL DEFAULT 1",
+            "metadata_json": "TEXT NOT NULL DEFAULT '{}'",
+            "updated_at": "TEXT",
+        }
+        chunk_columns = {
+            "locator_text": "TEXT NOT NULL DEFAULT ''",
+            "locator_json": "TEXT NOT NULL DEFAULT '{}'",
+            "content_hash": "TEXT NOT NULL DEFAULT ''",
+        }
+        for column, definition in document_columns.items():
+            self._ensure_column(connection, "documents", column, definition)
+        for column, definition in chunk_columns.items():
+            self._ensure_column(connection, "knowledge_chunks", column, definition)
+        connection.execute(
+            """
+            UPDATE documents SET collection_id = COALESCE(NULLIF(collection_id, ''), 'default'),
+                updated_at = COALESCE(updated_at, created_at)
+            """
+        )
+        connection.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_documents_collection
+            ON documents(collection_id, enabled, updated_at DESC);
+
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_documents_source
+            ON documents(collection_id, source_path) WHERE source_path IS NOT NULL;
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(
+                searchable,
+                title,
+                locator,
+                chunk_id UNINDEXED,
+                document_id UNINDEXED,
+                tokenize = 'unicode61'
+            );
+            """
+        )
+        connection.execute("DELETE FROM knowledge_fts")
+        rows = connection.execute(
+            """
+            SELECT c.id, c.document_id, c.content, c.locator_text, d.title
+            FROM knowledge_chunks c JOIN documents d ON d.id = c.document_id
+            """
+        ).fetchall()
+        connection.executemany(
+            """
+            INSERT INTO knowledge_fts(searchable, title, locator, chunk_id, document_id)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                (
+                    self._fts_searchable(row["content"]),
+                    row["title"],
+                    row["locator_text"],
+                    row["id"],
+                    row["document_id"],
+                )
+                for row in rows
+            ),
+        )
+
+    @staticmethod
+    def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
+        if column not in columns:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    @staticmethod
+    def _require_collection(connection: sqlite3.Connection, collection_id: str) -> None:
+        exists = connection.execute(
+            "SELECT 1 FROM knowledge_collections WHERE id = ?",
+            (collection_id,),
+        ).fetchone()
+        if not exists:
+            raise KeyError(collection_id)
+
+    def _insert_knowledge_chunks(
+        self,
+        connection: sqlite3.Connection,
+        document_id: str,
+        title: str,
+        chunks: list[dict],
+    ) -> None:
+        for position, chunk in enumerate(chunks):
+            content = str(chunk.get("content", "")).strip()
+            locator_text = str(chunk.get("locator_text", "")).strip()[:160]
+            locator = chunk.get("locator") if isinstance(chunk.get("locator"), dict) else {}
+            cursor = connection.execute(
+                """
+                INSERT INTO knowledge_chunks(
+                    document_id, position, content, locator_text, locator_json, content_hash
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    document_id,
+                    position,
+                    content,
+                    locator_text,
+                    json.dumps(locator, ensure_ascii=False),
+                    str(chunk.get("content_hash", "")),
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO knowledge_fts(searchable, title, locator, chunk_id, document_id)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    self._fts_searchable(content),
+                    title,
+                    locator_text,
+                    cursor.lastrowid,
+                    document_id,
+                ),
+            )
+
+    @staticmethod
+    def _fts_searchable(text: str) -> str:
+        lowered = text.lower()
+        tokens = re.findall(r"[a-z0-9_]{2,}", lowered)
+        for run in re.findall(r"[\u4e00-\u9fff]+", lowered):
+            tokens.extend(run[index:index + 2] for index in range(len(run) - 1))
+            tokens.append(run)
+            tokens.extend(run)
+        return " ".join(tokens)
+
+    @classmethod
+    def _fts_terms(cls, text: str) -> list[str]:
+        searchable = cls._fts_searchable(text)
+        seen = set()
+        terms = []
+        for term in searchable.split():
+            if term not in seen:
+                seen.add(term)
+                terms.append(term.replace('"', '""'))
+        return terms
 
     @staticmethod
     def _backup_info(backup_path: Path) -> dict:

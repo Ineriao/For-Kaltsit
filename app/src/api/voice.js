@@ -1,5 +1,8 @@
+import client from './client.js'
+
 const VOICE_FOLDER = '凯尔希思衡托'
 const BASE = 'http://127.0.0.1:8765/voice'
+const API_BASE = 'http://127.0.0.1:8765'
 
 // AI 回复关键词 → 语音匹配（基于实际台词内容）
 const TRIGGER_MAP = [
@@ -31,16 +34,32 @@ const CHAT_VOICES = [
 let currentAudio = null
 let lastPlayed = ''
 let _volume = 0.85
+let outputMode = localStorage.getItem('kaltsit_voice_output') || 'recorded'
+let audioContext = null
+let animationFrame = null
+let currentSource = null
+let currentAnalyser = null
 
 export function setVolume(v) {
   _volume = Math.max(0, Math.min(1, v))
   if (currentAudio) currentAudio.volume = _volume
 }
 
+export function setVoiceOutputMode(mode) {
+  outputMode = ['text', 'recorded', 'local-model'].includes(mode) ? mode : 'recorded'
+  localStorage.setItem('kaltsit_voice_output', outputMode)
+  if (outputMode === 'text') stopVoice()
+}
+
+export function getVoiceOutputMode() {
+  return outputMode
+}
+
 /**
  * AI 回复后播放：优先关键词匹配，否则随机
  */
 export function playVoice(text) {
+  if (outputMode === 'text') return
   const matched = TRIGGER_MAP.find(t =>
     t.keywords.some(kw => text.includes(kw))
   )
@@ -56,13 +75,91 @@ export function playVoice(text) {
 }
 
 export function playFile(filename) {
+  stopVoice()
+  const url = `${BASE}/${encodeURIComponent(VOICE_FOLDER)}/${encodeURIComponent(filename)}`
+  const audio = new Audio()
+  audio.crossOrigin = 'anonymous'
+  audio.src = url
+  audio.volume = _volume
+  audio.addEventListener('ended', stopVoice, { once: true })
+  audio.play()
+    .then(() => startLipSync(audio))
+    .catch(e => console.warn('[voice] 播放失败:', url, e.message))
+  currentAudio = audio
+}
+
+export function stopVoice() {
   if (currentAudio) {
     currentAudio.pause()
+    currentAudio.removeAttribute('src')
+    currentAudio.load()
     currentAudio = null
   }
-  const url = `${BASE}/${encodeURIComponent(VOICE_FOLDER)}/${encodeURIComponent(filename)}`
-  const audio = new Audio(url)
-  audio.volume = _volume
-  audio.play().catch(e => console.warn('[voice] 播放失败:', url, e.message))
-  currentAudio = audio
+  if (animationFrame) cancelAnimationFrame(animationFrame)
+  animationFrame = null
+  currentSource?.disconnect()
+  currentAnalyser?.disconnect()
+  currentSource = null
+  currentAnalyser = null
+  window.electronAPI?.setPetLipSync?.(0)
+}
+
+export async function getVoiceRecognitionStatus() {
+  const response = await client.get(`${API_BASE}/voice-recognition/status`)
+  return response.data
+}
+
+export async function reloadVoiceRecognitionModel() {
+  const response = await client.post(`${API_BASE}/voice-recognition/model/reload`, null, { timeout: 180000 })
+  return response.data
+}
+
+export async function downloadVoiceRecognitionModel() {
+  const response = await client.post(`${API_BASE}/voice-recognition/model/download`, null, { timeout: 900000 })
+  return response.data
+}
+
+export async function transcribeRecording(blob, language = 'auto') {
+  const audioBase64 = await blobToBase64(blob)
+  const response = await client.post(`${API_BASE}/voice-recognition/transcribe`, {
+    audio_base64: audioBase64,
+    language
+  }, { timeout: 180000 })
+  return response.data
+}
+
+function startLipSync(audio) {
+  audioContext ||= new AudioContext()
+  const source = audioContext.createMediaElementSource(audio)
+  const analyser = audioContext.createAnalyser()
+  analyser.fftSize = 256
+  analyser.smoothingTimeConstant = 0.68
+  source.connect(analyser)
+  analyser.connect(audioContext.destination)
+  currentSource = source
+  currentAnalyser = analyser
+  const levels = new Uint8Array(analyser.frequencyBinCount)
+  let lastSent = 0
+
+  const update = timestamp => {
+    if (audio !== currentAudio || audio.paused || audio.ended) return
+    analyser.getByteFrequencyData(levels)
+    const average = levels.reduce((sum, value) => sum + value, 0) / levels.length
+    if (timestamp - lastSent >= 50) {
+      window.electronAPI?.setPetLipSync?.(Math.max(0, Math.min(1, average / 92)))
+      lastSent = timestamp
+    }
+    animationFrame = requestAnimationFrame(update)
+  }
+  animationFrame = requestAnimationFrame(update)
+}
+
+async function blobToBase64(blob) {
+  const bytes = new Uint8Array(await blob.arrayBuffer())
+  const chunkSize = 0x8000
+  let binary = ''
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize))
+  }
+  return btoa(binary)
 }

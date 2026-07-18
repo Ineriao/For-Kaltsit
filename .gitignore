@@ -17,6 +17,7 @@ dist-electron-final-v6/
 dist-electron-final-v7/
 dist-electron-final-v8/
 dist-electron-final-v9/
+dist-electron-final-v10/
 app/dist/
 kaltsit-pet/build/
 kaltsit-pet/.gradle/
@@ -32,6 +33,7 @@ backend/.verification-data-v2/
 backend/.verification-data-v3/
 backend/.verification-data-v4/
 backend/.verification-data-v5/
+backend/.verification-data-v10/
 backend/.build-venv/
 backend/.build-venv311/
 backend/build-pyinstaller/
@@ -50,6 +52,8 @@ backend/build-pyinstaller-onefile-v6/
 backend/dist-onefile-v6/
 backend/build-pyinstaller-onefile-v8/
 backend/dist-onefile-v8/
+backend/build-pyinstaller-onefile-v10/
+backend/dist-onefile-v10/
 .build-tools/
 *.db-wal
 *.db-shm

@@ -7,15 +7,21 @@ from PyInstaller.utils.hooks import collect_all
 backend_directory = Path(SPECPATH)
 fastembed_data, fastembed_binaries, fastembed_hidden = collect_all("fastembed")
 onnx_data, onnx_binaries, onnx_hidden = collect_all("onnxruntime")
+rapidocr_data, rapidocr_binaries, rapidocr_hidden = collect_all("rapidocr")
+sherpa_data, sherpa_binaries, sherpa_hidden = collect_all("sherpa_onnx")
 
 a = Analysis(
     [str(backend_directory / "main.py")],
     pathex=[str(backend_directory)],
-    binaries=[*fastembed_binaries, *onnx_binaries],
-    datas=[*fastembed_data, *onnx_data],
+    binaries=[*fastembed_binaries, *onnx_binaries, *rapidocr_binaries, *sherpa_binaries],
+    datas=[*fastembed_data, *onnx_data, *rapidocr_data, *sherpa_data],
     hiddenimports=[
         *fastembed_hidden,
         *onnx_hidden,
+        *rapidocr_hidden,
+        *sherpa_hidden,
+        "docx",
+        "pypdf",
         "uvicorn.logging",
         "uvicorn.loops.auto",
         "uvicorn.protocols.http.auto",

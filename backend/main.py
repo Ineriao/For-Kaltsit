@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import binascii
 import os
 import re
 import secrets
@@ -18,6 +20,7 @@ from database import Database
 from memory import MEMORY_INSTRUCTION, MemoryService
 from prompt import KALTSIT_SYSTEM_PROMPT
 from rag import RagService
+from voice_recognition import VoiceRecognitionService
 
 load_dotenv(Path(__file__).with_name(".env"))
 config_dir = os.environ.get("KALTSIT_CONFIG_DIR", "").strip()
@@ -31,6 +34,7 @@ LOCAL_AUTH_TOKEN = os.environ.get("KALTSIT_LOCAL_TOKEN", "").strip()
 database = Database()
 rag_service = RagService(database)
 memory_service = MemoryService(database)
+voice_recognition_service = VoiceRecognitionService(database)
 
 ALLOWED_ACTIONS = {
     "RELAX",
@@ -140,7 +144,23 @@ class SessionRename(BaseModel):
 class KnowledgeDocumentCreate(BaseModel):
     title: str = Field(min_length=1, max_length=160)
     source_type: str = Field(min_length=1, max_length=16)
-    content: str = Field(min_length=1, max_length=5_242_880)
+    content: str | None = Field(default=None, max_length=20_971_520)
+    content_base64: str | None = Field(default=None, max_length=41_943_040)
+    collection_id: str = Field(default="default", min_length=1, max_length=64)
+    source_path: str | None = Field(default=None, max_length=1024)
+    source_modified_at: str | None = Field(default=None, max_length=64)
+
+
+class KnowledgeDocumentUpdate(BaseModel):
+    enabled: bool
+
+
+class KnowledgeCollectionCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=60)
+
+
+class KnowledgeCollectionUpdate(KnowledgeCollectionCreate):
+    enabled: bool = True
 
 
 class MemoryCreate(BaseModel):
@@ -155,6 +175,11 @@ class MemoryUpdate(MemoryCreate):
 class MemorySettingsUpdate(BaseModel):
     enabled: bool
     auto_capture: bool
+
+
+class VoiceTranscriptionRequest(BaseModel):
+    audio_base64: str = Field(min_length=1, max_length=16_777_216)
+    language: str = Field(default="auto", max_length=8)
 
 
 # ── 接口 ────────────────────────────────────────────────────
@@ -331,6 +356,47 @@ async def update_memory_settings(request: MemorySettingsUpdate):
     return memory_service.update_settings(request.enabled, request.auto_capture)
 
 
+@app.get("/voice-recognition/status")
+async def voice_recognition_status():
+    return voice_recognition_service.status()
+
+
+@app.post("/voice-recognition/model/download")
+async def download_voice_recognition_model():
+    try:
+        return await asyncio.to_thread(voice_recognition_service.download_model)
+    except Exception as error:
+        print(f"[ASR] 模型下载失败: {error}", flush=True)
+        raise HTTPException(502, "语音识别模型下载失败") from error
+
+
+@app.post("/voice-recognition/model/reload")
+async def reload_voice_recognition_model():
+    try:
+        return await asyncio.to_thread(voice_recognition_service.reload_model)
+    except Exception as error:
+        print(f"[ASR] 模型加载失败: {error}", flush=True)
+        raise HTTPException(400, "本地语音识别模型无效") from error
+
+
+@app.post("/voice-recognition/transcribe")
+async def transcribe_voice(request: VoiceTranscriptionRequest):
+    try:
+        audio_data = base64.b64decode(request.audio_base64, validate=True)
+        return await asyncio.to_thread(
+            voice_recognition_service.transcribe,
+            audio_data,
+            request.language,
+        )
+    except (binascii.Error, ValueError) as error:
+        raise HTTPException(400, str(error)) from error
+    except RuntimeError as error:
+        raise HTTPException(503, str(error)) from error
+    except Exception as error:
+        print(f"[ASR] 转写失败: {error}", flush=True)
+        raise HTTPException(500, "语音转写失败") from error
+
+
 @app.get("/rag/status")
 async def rag_status():
     return rag_service.status()
@@ -362,20 +428,70 @@ async def list_knowledge_documents():
     return {"documents": database.list_documents()}
 
 
+@app.get("/knowledge/collections")
+async def list_knowledge_collections():
+    return {"collections": database.list_collections()}
+
+
+@app.post("/knowledge/collections", status_code=201)
+async def create_knowledge_collection(request: KnowledgeCollectionCreate):
+    try:
+        return database.create_collection(request.name)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+@app.patch("/knowledge/collections/{collection_id}")
+async def update_knowledge_collection(collection_id: str, request: KnowledgeCollectionUpdate):
+    try:
+        collection = database.update_collection(collection_id, request.name, request.enabled)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    if not collection:
+        raise HTTPException(404, "知识分组不存在")
+    return collection
+
+
 @app.post("/knowledge/documents", status_code=201)
 async def import_knowledge_document(request: KnowledgeDocumentCreate):
     try:
+        if request.content_base64:
+            try:
+                data = base64.b64decode(request.content_base64, validate=True)
+            except (binascii.Error, ValueError) as error:
+                raise ValueError("资料内容不是有效的 Base64") from error
+        elif request.content is not None:
+            data = request.content.encode("utf-8")
+        else:
+            raise ValueError("资料内容不能为空")
+        if not data:
+            raise ValueError("资料内容不能为空")
+        if len(data) > 30 * 1024 * 1024:
+            raise ValueError("单个资料不能超过 30 MB")
         document = await asyncio.to_thread(
             rag_service.import_document,
             request.title,
             request.source_type,
-            request.content,
+            data,
+            request.collection_id,
+            request.source_path,
+            request.source_modified_at,
         )
+    except KeyError as error:
+        raise HTTPException(404, "知识分组不存在") from error
     except ValueError as error:
         raise HTTPException(400, str(error)) from error
     except Exception as error:
         print(f"[RAG] 文件索引失败: {error}")
         raise HTTPException(500, "文件索引失败") from error
+    return document
+
+
+@app.patch("/knowledge/documents/{document_id}")
+async def update_knowledge_document(document_id: str, request: KnowledgeDocumentUpdate):
+    document = database.set_document_enabled(document_id, request.enabled)
+    if not document:
+        raise HTTPException(404, "资料不存在")
     return document
 
 
@@ -403,6 +519,7 @@ async def backend_diagnostics():
     return {
         **database.diagnostics(),
         "rag": rag_service.status(),
+        "voice_recognition": voice_recognition_service.status(),
         "memory": memory_service.get_settings(),
     }
 
@@ -456,10 +573,10 @@ def build_system_prompt(
 ) -> str:
     context = ""
     if sources:
-        blocks = [
-            f"[{index}] {source['title']}\n{source['content']}"
-            for index, source in enumerate(sources, start=1)
-        ]
+        blocks = []
+        for index, source in enumerate(sources, start=1):
+            locator = f" · {source['locator_text']}" if source.get("locator_text") else ""
+            blocks.append(f"[{index}] {source['title']}{locator}\n{source['content']}")
         context = (
             "\n\n以下是本地知识库检索结果。仅在与问题相关时使用；"
             "资料与既有设定冲突时，明确指出不确定性。\n\n"

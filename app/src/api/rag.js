@@ -22,12 +22,42 @@ export async function getKnowledgeDocuments() {
   return response.data.documents
 }
 
+export async function getKnowledgeCollections() {
+  const response = await client.get(`${BASE}/knowledge/collections`)
+  return response.data.collections
+}
+
+export async function createKnowledgeCollection(name) {
+  const response = await client.post(`${BASE}/knowledge/collections`, { name })
+  return response.data
+}
+
+export async function updateKnowledgeCollection(collection) {
+  const response = await client.patch(
+    `${BASE}/knowledge/collections/${encodeURIComponent(collection.id)}`,
+    { name: collection.name, enabled: collection.enabled }
+  )
+  return response.data
+}
+
 export async function importKnowledgeDocument(file) {
   const response = await client.post(`${BASE}/knowledge/documents`, {
     title: file.title,
     source_type: file.sourceType,
-    content: file.content
+    content: file.content,
+    content_base64: file.contentBase64,
+    collection_id: file.collectionId || 'default',
+    source_path: file.sourcePath,
+    source_modified_at: file.sourceModifiedAt
   }, { timeout: 120000 })
+  return response.data
+}
+
+export async function setKnowledgeDocumentEnabled(documentId, enabled) {
+  const response = await client.patch(
+    `${BASE}/knowledge/documents/${encodeURIComponent(documentId)}`,
+    { enabled }
+  )
   return response.data
 }
 

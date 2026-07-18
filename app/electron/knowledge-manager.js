@@ -3,9 +3,12 @@ const { spawn } = require('child_process')
 const fs = require('fs')
 const path = require('path')
 
-const MAX_FILE_SIZE = 5 * 1024 * 1024
+const MAX_FILE_SIZE = 30 * 1024 * 1024
 const MAX_FILE_COUNT = 20
-const SUPPORTED_EXTENSIONS = new Set(['.txt', '.md', '.json'])
+const SUPPORTED_EXTENSIONS = new Set([
+  '.txt', '.md', '.json', '.html', '.htm',
+  '.pdf', '.docx', '.png', '.jpg', '.jpeg', '.webp', '.bmp'
+])
 const MODEL_ARCHIVE_URL = 'https://storage.googleapis.com/qdrant-fastembed/fast-bge-small-zh-v1.5.tar.gz'
 
 async function selectKnowledgeFiles(parentWindow) {
@@ -13,7 +16,10 @@ async function selectKnowledgeFiles(parentWindow) {
     title: '导入本地资料',
     buttonLabel: '加入知识库',
     properties: ['openFile', 'multiSelections', 'dontAddToRecent'],
-    filters: [{ name: '文本资料', extensions: ['txt', 'md', 'json'] }]
+    filters: [{
+      name: '知识资料',
+      extensions: ['txt', 'md', 'json', 'html', 'htm', 'pdf', 'docx', 'png', 'jpg', 'jpeg', 'webp', 'bmp']
+    }]
   })
   if (result.canceled) return { canceled: true, files: [] }
   if (result.filePaths.length > MAX_FILE_COUNT) {
@@ -26,14 +32,17 @@ async function selectKnowledgeFiles(parentWindow) {
     if (!SUPPORTED_EXTENSIONS.has(extension)) continue
     const stats = await fs.promises.stat(filePath)
     if (stats.size > MAX_FILE_SIZE) {
-      return { canceled: false, error: `${path.basename(filePath)} 超过 5 MB`, files: [] }
+      return { canceled: false, error: `${path.basename(filePath)} 超过 30 MB`, files: [] }
     }
-    const content = (await fs.promises.readFile(filePath, 'utf8')).replace(/^\uFEFF/, '')
-    files.push({
+    const data = await fs.promises.readFile(filePath)
+    const file = {
       title: path.basename(filePath),
       sourceType: extension.slice(1),
-      content
-    })
+      sourcePath: filePath,
+      sourceModifiedAt: stats.mtime.toISOString(),
+      contentBase64: data.toString('base64')
+    }
+    files.push(file)
   }
   return { canceled: false, files }
 }

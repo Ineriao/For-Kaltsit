@@ -1,4 +1,4 @@
-import json
+import hashlib
 import math
 import re
 import threading
@@ -8,14 +8,12 @@ from array import array
 from pathlib import Path
 
 from database import Database
+from knowledge_parser import KnowledgeParser, SUPPORTED_SOURCE_TYPES
 
 
 MODEL_NAME = "BAAI/bge-small-zh-v1.5"
 MODEL_DIMENSION = 512
 MODEL_ARCHIVE_URL = "https://storage.googleapis.com/qdrant-fastembed/fast-bge-small-zh-v1.5.tar.gz"
-SUPPORTED_SOURCE_TYPES = {"txt", "md", "json"}
-
-
 class RagService:
     def __init__(self, database: Database) -> None:
         self.database = database
@@ -25,6 +23,7 @@ class RagService:
         self.ready_marker = self.model_directory / ".bge-small-zh-v1.5-ready"
         self._model = None
         self._model_lock = threading.Lock()
+        self.parser = KnowledgeParser()
 
     def status(self) -> dict:
         manual_ready = self._manual_model_ready()
@@ -35,6 +34,9 @@ class RagService:
             "ready": bool(self._model or manual_ready or downloaded_ready),
             "source": "manual" if manual_ready else "download" if downloaded_ready else None,
             "documents": len(self.database.list_documents()),
+            "collections": len(self.database.list_collections()),
+            "supported_types": sorted(SUPPORTED_SOURCE_TYPES),
+            "ocr": self.parser.ocr_status(),
         }
 
     def download_model(self) -> dict:
@@ -58,20 +60,37 @@ class RagService:
         self.index_pending_chunks()
         return self.status()
 
-    def import_document(self, title: str, source_type: str, content: str) -> dict:
+    def import_document(
+        self,
+        title: str,
+        source_type: str,
+        data: bytes,
+        collection_id: str = "default",
+        source_path: str | None = None,
+        source_modified_at: str | None = None,
+    ) -> dict:
         normalized_type = source_type.lower().lstrip(".")
         if normalized_type not in SUPPORTED_SOURCE_TYPES:
-            raise ValueError("仅支持 txt、md 和 json 文件")
-        normalized_content = self._normalize_document(content, normalized_type)
-        chunks = self._split_chunks(normalized_content)
+            raise ValueError("不支持该资料格式")
+        chunks, metadata = self.parser.parse(data, normalized_type)
         if not chunks:
             raise ValueError("文件中没有可索引的文本")
 
-        document = self.database.create_document(title, normalized_type, chunks)
+        document, import_status = self.database.upsert_document(
+            title=title,
+            source_type=normalized_type,
+            chunks=chunks,
+            collection_id=collection_id,
+            source_path=source_path,
+            source_hash=hashlib.sha256(data).hexdigest(),
+            source_modified_at=source_modified_at,
+            metadata=metadata,
+        )
         model = self._load_model(allow_download=False)
-        if model:
+        if model and import_status != "unchanged":
             self._index_document(document["id"], model)
             document = self.database.get_document(document["id"])
+        document["import_status"] = import_status
         return document
 
     def delete_document(self, document_id: str) -> bool:
@@ -96,9 +115,15 @@ class RagService:
         if model:
             query_embedding = self._embed_texts(model, [query])[0]
 
+        fts_results = self.database.search_knowledge_fts(query, limit=max(limit * 6, 24))
+        fts_scores = {
+            chunk["id"]: 1.0 / math.sqrt(index + 1)
+            for index, chunk in enumerate(fts_results)
+        }
         ranked = []
         for chunk in chunks:
             keyword_score = self._keyword_score(query_terms, chunk["content"])
+            fts_score = fts_scores.get(chunk["id"], 0.0)
             semantic_score = None
             if query_embedding is not None and chunk["embedding"]:
                 stored_embedding = array("f")
@@ -107,10 +132,10 @@ class RagService:
                     semantic_score = self._cosine(query_embedding, stored_embedding)
 
             if semantic_score is None:
-                score = keyword_score
+                score = fts_score * 0.78 + keyword_score * 0.22
             else:
                 normalized_semantic = max(0.0, min(1.0, (semantic_score + 1.0) / 2.0))
-                score = normalized_semantic * 0.72 + keyword_score * 0.28
+                score = normalized_semantic * 0.64 + fts_score * 0.26 + keyword_score * 0.10
 
             if score > 0.05:
                 ranked.append((score, chunk))
@@ -123,6 +148,10 @@ class RagService:
                 "title": chunk["title"],
                 "position": chunk["position"],
                 "content": chunk["content"],
+                "locator": chunk.get("locator", {}),
+                "locator_text": chunk.get("locator_text", ""),
+                "collection_id": chunk.get("collection_id"),
+                "collection_name": chunk.get("collection_name"),
                 "score": round(score, 4),
             })
         return results
@@ -212,57 +241,6 @@ class RagService:
             vector = array("f", (float(value) for value in embedding))
             vectors.append(vector)
         return vectors
-
-    @staticmethod
-    def _normalize_document(content: str, source_type: str) -> str:
-        if source_type != "json":
-            return content.replace("\r\n", "\n").replace("\r", "\n")
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError as error:
-            raise ValueError("JSON 文件格式无效") from error
-
-        lines = []
-
-        def walk(value, path: str = "") -> None:
-            if isinstance(value, dict):
-                for key, child in value.items():
-                    walk(child, f"{path}.{key}" if path else str(key))
-            elif isinstance(value, list):
-                for index, child in enumerate(value):
-                    walk(child, f"{path}[{index}]")
-            elif value is not None:
-                lines.append(f"{path}: {value}" if path else str(value))
-
-        walk(parsed)
-        return "\n".join(lines)
-
-    @staticmethod
-    def _split_chunks(content: str, target_size: int = 420, overlap: int = 60) -> list[str]:
-        normalized = re.sub(r"[ \t]+", " ", content)
-        normalized = re.sub(r"\n{3,}", "\n\n", normalized).strip()
-        if not normalized:
-            return []
-
-        paragraphs = [part.strip() for part in re.split(r"\n\s*\n", normalized) if part.strip()]
-        chunks = []
-        buffer = ""
-        for paragraph in paragraphs:
-            pieces = [paragraph[index:index + target_size] for index in range(0, len(paragraph), target_size)]
-            for piece in pieces:
-                candidate = f"{buffer}\n\n{piece}".strip() if buffer else piece
-                if len(candidate) <= target_size:
-                    buffer = candidate
-                    continue
-                if buffer:
-                    chunks.append(buffer)
-                    prefix = buffer[-overlap:]
-                    buffer = f"{prefix}\n{piece}".strip()
-                else:
-                    chunks.append(piece)
-        if buffer:
-            chunks.append(buffer)
-        return [chunk for chunk in chunks if len(chunk.strip()) >= 2]
 
     @staticmethod
     def _keyword_terms(text: str) -> set[str]:

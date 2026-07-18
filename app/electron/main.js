@@ -28,6 +28,10 @@ const {
   selectAndImportEmbeddingModel,
   selectKnowledgeFiles
 } = require('./knowledge-manager')
+const {
+  downloadVoiceRecognitionModel,
+  selectAndImportVoiceRecognitionModel
+} = require('./voice-manager')
 const { DesktopTools } = require('./desktop-tools')
 const { DiagnosticsManager } = require('./diagnostics-manager')
 const { UpdateManager } = require('./update-manager')
@@ -355,6 +359,10 @@ function registerIpcHandlers() {
   ipcMain.on('window-minimize', () => mainWindow?.minimize())
   ipcMain.on('window-hide', showPet)
   ipcMain.on('settings-expanded', (_, expanded) => setWindowExpanded(Boolean(expanded)))
+  ipcMain.on('pet-lipsync', (_, level) => {
+    const normalized = Math.max(0, Math.min(1, Number(level) || 0))
+    sendToPet(`lipsync:${normalized.toFixed(3)}`)
+  })
   ipcMain.on('hit-regions:update', (_, regions = {}) => {
     hitRegions = {
       sprite: regions.sprite || hitRegions.sprite,
@@ -404,6 +412,8 @@ function registerIpcHandlers() {
     if (result.imported) await restartBackend()
     return result
   })
+  ipcMain.handle('voice:download-asr-model', downloadVoiceRecognitionModel)
+  ipcMain.handle('voice:import-asr-model', () => selectAndImportVoiceRecognitionModel(mainWindow))
   ipcMain.handle('pet-action', async (_, action) => {
     const normalized = typeof action === 'string' ? action.toUpperCase() : ''
     if (!ALLOWED_PET_ACTIONS.has(normalized)) return false

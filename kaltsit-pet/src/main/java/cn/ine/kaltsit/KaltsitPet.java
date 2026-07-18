@@ -246,6 +246,14 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
                 behavior.onExternalAction(command.substring("action:".length()));
                 return;
             }
+            if (command.startsWith("lipsync:")) {
+                try {
+                    spine.setLipSync(Float.parseFloat(command.substring("lipsync:".length())));
+                } catch (NumberFormatException ignored) {
+                    spine.setLipSync(0f);
+                }
+                return;
+            }
             switch (command) {
                 case "show"  -> window.setVisible(true);
                 case "hide"  -> window.setVisible(false);

@@ -33,7 +33,7 @@
     "artifactName": "Kaltsit-Setup-${version}.${ext}",
     "asar": true,
     "electronDist": "node_modules/electron/dist",
-    "directories": { "output": "dist-electron" },
+    "directories": { "output": "dist-electron-final-v10" },
     "win": {
       "target": "nsis"
     },
@@ -53,7 +53,7 @@
     "files": ["dist/**", "electron/**", "public/**"],
     "extraResources": [
       {
-        "from": "../backend/dist-onefile-v8/kaltsit-backend.exe",
+        "from": "../backend/dist-onefile-v10/kaltsit-backend.exe",
         "to": "runtime/backend/kaltsit-backend.exe"
       },
       {

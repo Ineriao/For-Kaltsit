@@ -21,6 +21,12 @@ public class SpineModel {
     private final AnimationState    animState;
     private final SkeletonData      skelData;
     private final TextureAtlas      atlas;
+    private final Slot              closedMouthSlot;
+    private final Slot              openMouthSlot;
+
+    private volatile float lipSyncTarget = 0f;
+    private float lipSyncLevel = 0f;
+    private volatile long lastLipSyncAt = 0L;
 
     // FBO 用于像素检测
     private final FrameBuffer        fbo;
@@ -45,6 +51,8 @@ public class SpineModel {
         skeleton = new Skeleton(skelData);
         skeleton.setPosition(W / 2f, 0f);  // 脚踩 mainCamera 底部(y=0)
         skeleton.updateWorldTransform();
+        closedMouthSlot = skeleton.findSlot("F_Mouth");
+        openMouthSlot = skeleton.findSlot("F_Mouth_O");
 
         AnimationStateData asd = new AnimationStateData(skelData);
         asd.setDefaultMix(0.2f);
@@ -91,6 +99,11 @@ public class SpineModel {
         skeleton.setScaleX(dir > 0 ? Math.abs(skeleton.getScaleX()) : -Math.abs(skeleton.getScaleX()));
     }
 
+    public void setLipSync(float level) {
+        lipSyncTarget = Math.max(0f, Math.min(1f, level));
+        lastLipSyncAt = System.currentTimeMillis();
+    }
+
     /**
      * 直接渲染到主帧缓冲（透明背景），同时渲染到 FBO 用于像素检测。
      * 不在主帧缓冲里 glClear——由 LWJGL3 透明帧缓冲合成处理。
@@ -98,6 +111,7 @@ public class SpineModel {
     public void render(PolygonSpriteBatch screenBatch, float delta) {
         animState.update(delta);
         animState.apply(skeleton);
+        updateLipSync(delta);
         skeleton.updateWorldTransform();
 
         // Pass 1：FBO（仅用于像素检测）
@@ -136,6 +150,15 @@ public class SpineModel {
         List<String> names = new ArrayList<>();
         for (Animation a : skelData.getAnimations()) names.add(a.getName());
         return names;
+    }
+
+    private void updateLipSync(float delta) {
+        if (System.currentTimeMillis() - lastLipSyncAt > 280L) lipSyncTarget = 0f;
+        float response = Math.min(1f, delta * 20f);
+        lipSyncLevel += (lipSyncTarget - lipSyncLevel) * response;
+        if (closedMouthSlot == null || openMouthSlot == null) return;
+        closedMouthSlot.getColor().a *= 1f - lipSyncLevel * 0.92f;
+        openMouthSlot.getColor().a = Math.max(openMouthSlot.getColor().a, lipSyncLevel);
     }
 
     public void dispose() {

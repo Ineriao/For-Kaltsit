@@ -39,7 +39,7 @@
               <p>{{ message.text }}</p>
               <div v-if="message.sources?.length" class="message-sources">
                 <span v-for="source in message.sources" :key="`${source.document_id}-${source.position}`">
-                  {{ source.title }} · {{ String(source.position + 1).padStart(2, '0') }}
+                  {{ source.title }} · {{ source.locator_text || String(source.position + 1).padStart(2, '0') }}
                 </span>
               </div>
             </article>
@@ -125,9 +125,12 @@
           <button
             type="button"
             class="composer-button voice-button"
-            disabled
-            aria-label="本地语音输入尚未接入"
-            title="本地语音识别模块尚未接入"
+            :class="{ active: micState === 'recording', processing: micState === 'transcribing' }"
+            :style="{ '--mic-level': micLevel }"
+            :disabled="isBusy || runtimeStatus.backend !== 'ready' || micState === 'transcribing'"
+            :aria-label="micState === 'recording' ? '结束录音' : '开始本地语音输入'"
+            :title="voiceRecognitionReady ? (micState === 'recording' ? '结束录音' : '本地语音输入') : '前往声音设置安装识别模型'"
+            @click="toggleVoiceRecording"
           >
             <svg viewBox="0 0 20 20" aria-hidden="true">
               <path d="M10 2.5A2.5 2.5 0 0 0 7.5 5v5a2.5 2.5 0 0 0 5 0V5A2.5 2.5 0 0 0 10 2.5Z" />
@@ -147,7 +150,8 @@
 
         <div class="dock-status">
           <span :class="`status-${runtimeStatus.backend}`">AI {{ backendLabel }}</span>
-          <span>PET {{ petLabel }} · {{ behaviorLabel }}</span>
+          <span v-if="micState !== 'idle'" :title="micMessage">VOICE {{ micStateLabel }}</span>
+          <span v-else>PET {{ petLabel }} · {{ behaviorLabel }}</span>
           <span>{{ inputText.length.toString().padStart(3, '0') }} / 500</span>
         </div>
       </footer>
@@ -168,8 +172,10 @@
 
         <nav class="settings-tabs" aria-label="设置分类">
           <button type="button" :class="{ active: settingsView === 'general' }" @click="settingsView = 'general'">常规</button>
+          <button type="button" :class="{ active: settingsView === 'knowledge' }" @click="settingsView = 'knowledge'">知识</button>
           <button type="button" :class="{ active: settingsView === 'memory' }" @click="settingsView = 'memory'">记忆</button>
           <button type="button" :class="{ active: settingsView === 'tools' }" @click="settingsView = 'tools'">工具</button>
+          <button type="button" :class="{ active: settingsView === 'voice' }" @click="settingsView = 'voice'">声音</button>
           <button type="button" :class="{ active: settingsView === 'diagnostics' }" @click="settingsView = 'diagnostics'">诊断</button>
         </nav>
 
@@ -242,38 +248,6 @@
             </label>
           </section>
 
-          <section class="setting-section knowledge-section">
-            <header>
-              <span>本地知识库</span>
-              <small>{{ ragStatus.ready ? 'HYBRID SEARCH' : 'KEYWORD MODE' }}</small>
-            </header>
-            <div class="knowledge-model">
-              <span>
-                <b>语义模型</b>
-                <small>{{ ragStatus.ready ? `READY · ${ragStatus.source?.toUpperCase()}` : 'BAAI / BGE SMALL ZH' }}</small>
-              </span>
-              <i :class="{ ready: ragStatus.ready }" />
-            </div>
-            <div class="knowledge-actions">
-              <button type="button" :disabled="knowledgeBusy" @click="importKnowledgeFiles">导入资料</button>
-              <button v-if="!ragStatus.ready" type="button" :disabled="knowledgeBusy" @click="downloadKnowledgeModel">下载模型</button>
-              <button v-if="!ragStatus.ready" type="button" :disabled="knowledgeBusy" @click="importKnowledgeModel">手动导入</button>
-            </div>
-            <div class="knowledge-list">
-              <p v-if="!knowledgeDocuments.length" class="knowledge-empty">尚未导入 txt / md / json 资料</p>
-              <article v-for="document in knowledgeDocuments" :key="document.id">
-                <span>
-                  <b>{{ document.title }}</b>
-                  <small>{{ document.source_type.toUpperCase() }} · {{ document.indexed_count }}/{{ document.chunk_count }} CHUNKS</small>
-                </span>
-                <button type="button" :disabled="knowledgeBusy" @click="requestKnowledgeDelete(document.id)">
-                  {{ knowledgeDeleteArmedId === document.id ? '确认' : '移除' }}
-                </button>
-              </article>
-            </div>
-            <p v-if="knowledgeMessage" class="knowledge-message">{{ knowledgeMessage }}</p>
-          </section>
-
           <section class="setting-section runtime-config-section">
             <header>
               <span>运行配置</span>
@@ -341,6 +315,11 @@
           </section>
           </div>
 
+          <KnowledgePanel
+            v-show="settingsView === 'knowledge'"
+            :backend-ready="runtimeStatus.backend === 'ready'"
+          />
+
           <MemoryPanel
             v-show="settingsView === 'memory'"
             :backend-ready="runtimeStatus.backend === 'ready'"
@@ -350,6 +329,12 @@
           <DesktopToolsPanel
             v-show="settingsView === 'tools'"
             @use-context="setToolContext"
+          />
+
+          <VoicePanel
+            v-show="settingsView === 'voice'"
+            :backend-ready="runtimeStatus.backend === 'ready'"
+            @status-change="handleVoiceStatus"
           />
 
           <DiagnosticsPanel
@@ -372,17 +357,17 @@
 <script setup>
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
-  deleteKnowledgeDocument,
-  downloadRagModel,
-  getKnowledgeDocuments,
-  getRagStatus,
-  importKnowledgeDocument,
-  reloadRagModel
-} from '../api/rag.js'
-import { setVolume } from '../api/voice.js'
+  getVoiceRecognitionStatus,
+  setVolume,
+  stopVoice,
+  transcribeRecording
+} from '../api/voice.js'
+import { VoiceRecorder } from '../audio/recorder.js'
+import KnowledgePanel from './KnowledgePanel.vue'
 import MemoryPanel from './MemoryPanel.vue'
 import DesktopToolsPanel from './DesktopToolsPanel.vue'
 import DiagnosticsPanel from './DiagnosticsPanel.vue'
+import VoicePanel from './VoicePanel.vue'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -435,11 +420,10 @@ const secureConfig = ref({ apiKeyConfigured: false, apiKeyHint: '' })
 const editingSessionId = ref(null)
 const editingTitle = ref('')
 const deleteArmedId = ref(null)
-const ragStatus = ref({ ready: false, source: null })
-const knowledgeDocuments = ref([])
-const knowledgeBusy = ref(false)
-const knowledgeMessage = ref('')
-const knowledgeDeleteArmedId = ref(null)
+const micState = ref('idle')
+const micLevel = ref(0)
+const micMessage = ref('')
+const voiceRecognitionReady = ref(false)
 
 const SETTINGS_KEY = 'kaltsit_settings'
 const SPRITE_KEY = 'kaltsit_sprite'
@@ -457,6 +441,8 @@ let historyCloseTimer
 let settingsCollapseTimer
 let savedNoticeTimer
 let removeForceCloseListener
+let recorder = null
+let recordingFinalizing = false
 
 setVolume(volume.value / 100)
 
@@ -512,9 +498,19 @@ const behaviorLabel = computed(() => {
   return `${behavior.emotion || 'CALM'} / ${behavior.mode || 'IDLE'}`
 })
 
+const micStateLabel = computed(() => ({
+  recording: `LISTENING ${Math.round(micLevel.value * 100).toString().padStart(2, '0')}`,
+  transcribing: 'TRANSCRIBING',
+  error: 'ERROR'
+})[micState.value] || 'READY')
+
 watch(() => props.messages.length, async () => {
   await nextTick()
   if (historyEl.value) historyEl.value.scrollTop = historyEl.value.scrollHeight
+})
+
+watch(() => props.runtimeStatus.backend, status => {
+  if (status === 'ready') loadVoiceRecognitionState()
 })
 
 watch(
@@ -523,16 +519,12 @@ watch(
   { immediate: true }
 )
 
-watch(() => props.runtimeStatus.backend, status => {
-  if (status === 'ready') loadKnowledgeState()
-})
-
 onMounted(async () => {
   removeForceCloseListener = window.electronAPI?.onForceCloseSettings(forceCloseSettings)
   if (window.electronAPI?.getSecureConfig) {
     secureConfig.value = await window.electronAPI.getSecureConfig()
   }
-  if (props.runtimeStatus.backend === 'ready') await loadKnowledgeState()
+  if (props.runtimeStatus.backend === 'ready') await loadVoiceRecognitionState()
   syncHitRegions()
 })
 
@@ -541,6 +533,7 @@ onUnmounted(() => {
   window.clearTimeout(settingsCollapseTimer)
   window.clearTimeout(savedNoticeTimer)
   removeForceCloseListener?.()
+  if (recorder?.running) recorder.stop('unmount')
 })
 
 function readStorage(key, fallback) {
@@ -599,6 +592,80 @@ function submit() {
   inputText.value = ''
   toolContext.value = null
   nextTick(() => inputEl.value?.focus())
+}
+
+async function loadVoiceRecognitionState() {
+  try {
+    handleVoiceStatus(await getVoiceRecognitionStatus())
+  } catch {
+    voiceRecognitionReady.value = false
+  }
+}
+
+function handleVoiceStatus(status) {
+  voiceRecognitionReady.value = Boolean(status?.ready)
+}
+
+async function toggleVoiceRecording() {
+  if (micState.value === 'recording') {
+    await finishVoiceRecording('manual')
+    return
+  }
+  if (!voiceRecognitionReady.value) {
+    openSettings()
+    settingsView.value = 'voice'
+    return
+  }
+
+  stopVoice()
+  micMessage.value = ''
+  recorder = new VoiceRecorder({
+    onLevel: level => { micLevel.value = level },
+    onAutoStop: reason => finishVoiceRecording(reason)
+  })
+  try {
+    await recorder.start()
+    micState.value = 'recording'
+  } catch (error) {
+    micState.value = 'error'
+    micMessage.value = error.name === 'NotAllowedError' ? '麦克风权限被拒绝' : '麦克风启动失败'
+    window.setTimeout(() => { micState.value = 'idle' }, 1800)
+  }
+}
+
+async function finishVoiceRecording(reason) {
+  if (!recorder?.running || recordingFinalizing) return
+  recordingFinalizing = true
+  try {
+    const recording = await recorder.stop(reason)
+    recorder = null
+    if (!recording?.hadSpeech) {
+      micMessage.value = '未检测到有效语音'
+      micState.value = 'error'
+      window.setTimeout(() => { micState.value = 'idle' }, 1500)
+      return
+    }
+    micState.value = 'transcribing'
+    const result = await transcribeRecording(recording.blob)
+    if (!result.text) {
+      micMessage.value = '未识别出文本'
+      micState.value = 'error'
+      window.setTimeout(() => { micState.value = 'idle' }, 1500)
+      return
+    }
+    inputText.value = result.text
+    micState.value = 'idle'
+    await nextTick()
+    if (localStorage.getItem('kaltsit_voice_auto_send') !== 'false') submit()
+    else inputEl.value?.focus()
+  } catch (error) {
+    micMessage.value = error.response?.data?.detail || error.message || '语音转写失败'
+    micState.value = 'error'
+    window.setTimeout(() => { micState.value = 'idle' }, 1800)
+  } finally {
+    micLevel.value = 0
+    recordingFinalizing = false
+  }
 }
 
 function setToolContext(context) {
@@ -699,94 +766,6 @@ async function reimportAssets() {
   } finally {
     runtimeConfigBusy.value = false
   }
-}
-
-async function loadKnowledgeState() {
-  try {
-    const [status, documents] = await Promise.all([
-      getRagStatus(),
-      getKnowledgeDocuments()
-    ])
-    ragStatus.value = status
-    knowledgeDocuments.value = documents
-  } catch (error) {
-    console.warn('[knowledge] 状态读取失败:', error.message)
-  }
-}
-
-async function importKnowledgeFiles() {
-  knowledgeBusy.value = true
-  knowledgeMessage.value = ''
-  try {
-    const result = await window.electronAPI.selectKnowledgeFiles()
-    if (result?.canceled) return
-    if (result?.error) throw new Error(result.error)
-    for (const file of result.files || []) {
-      await importKnowledgeDocument(file)
-    }
-    await loadKnowledgeState()
-    knowledgeMessage.value = `已导入 ${result.files?.length || 0} 个文件。`
-  } catch (error) {
-    knowledgeMessage.value = getRequestError(error, '资料导入失败')
-  } finally {
-    knowledgeBusy.value = false
-  }
-}
-
-async function downloadKnowledgeModel() {
-  knowledgeBusy.value = true
-  knowledgeMessage.value = '正在下载并初始化语义模型，请保持网络连接。'
-  try {
-    if (window.electronAPI?.downloadEmbeddingModel) {
-      await window.electronAPI.downloadEmbeddingModel()
-      ragStatus.value = await reloadRagModel()
-    } else {
-      ragStatus.value = await downloadRagModel()
-    }
-    await loadKnowledgeState()
-    knowledgeMessage.value = '语义模型已就绪，现有资料已完成索引。'
-  } catch (error) {
-    knowledgeMessage.value = getRequestError(error, '模型下载失败')
-  } finally {
-    knowledgeBusy.value = false
-  }
-}
-
-async function importKnowledgeModel() {
-  knowledgeBusy.value = true
-  knowledgeMessage.value = ''
-  try {
-    const result = await window.electronAPI.importEmbeddingModel()
-    if (result?.canceled) return
-    if (!result?.imported) throw new Error(result?.error || '模型导入失败')
-    knowledgeMessage.value = '模型已导入，AI 服务正在重启并补齐索引。'
-  } catch (error) {
-    knowledgeMessage.value = getRequestError(error, '模型导入失败')
-  } finally {
-    knowledgeBusy.value = false
-  }
-}
-
-async function requestKnowledgeDelete(documentId) {
-  if (knowledgeDeleteArmedId.value !== documentId) {
-    knowledgeDeleteArmedId.value = documentId
-    return
-  }
-  knowledgeDeleteArmedId.value = null
-  knowledgeBusy.value = true
-  knowledgeMessage.value = ''
-  try {
-    await deleteKnowledgeDocument(documentId)
-    await loadKnowledgeState()
-  } catch (error) {
-    knowledgeMessage.value = getRequestError(error, '资料移除失败')
-  } finally {
-    knowledgeBusy.value = false
-  }
-}
-
-function getRequestError(error, fallback) {
-  return error.response?.data?.detail || error.message || fallback
 }
 
 function saveAll() {
@@ -1194,6 +1173,12 @@ button svg {
 }
 
 .composer-button:disabled { opacity: 0.16; cursor: not-allowed; }
+.voice-button.active {
+  color: white;
+  background: rgba(255, 255, 255, calc(0.05 + var(--mic-level) * 0.18));
+  box-shadow: 0 0 calc(5px + var(--mic-level) * 10px) rgba(255, 255, 255, calc(0.2 + var(--mic-level) * 0.4));
+}
+.voice-button.processing { animation: status-pulse 0.8s ease-in-out infinite; }
 
 .dock-status {
   display: flex;
@@ -1357,7 +1342,7 @@ button svg {
 
 .settings-tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(6, 1fr);
   gap: 1px;
   margin-top: 10px;
   background: rgba(255, 255, 255, 0.1);

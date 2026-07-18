@@ -48,7 +48,7 @@ import {
   renameSession,
   sendMessage
 } from './api/chat.js'
-import { playFile, playVoice } from './api/voice.js'
+import { playFile, playVoice, stopVoice } from './api/voice.js'
 
 const INITIAL_GREETING = '不必过分在意我的状态，我会尽快适应生理机能的些许变化，这不会妨碍我的工作。从现在开始，还是由我来担任你的全科医生。'
 const messages = ref([{ role: 'assistant', text: INITIAL_GREETING }])
@@ -192,6 +192,7 @@ function minimizeWindow() {
 
 async function handleSend(text, toolContext = null) {
   if (!text.trim() || isResponding.value) return
+  stopVoice()
   if (!currentSessionId.value) {
     try {
       await createNewSession()
