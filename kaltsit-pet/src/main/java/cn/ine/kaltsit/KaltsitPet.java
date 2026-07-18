@@ -232,6 +232,16 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
     public void onIpcCommand(String cmd) {
         Gdx.app.postRunnable(() -> {
             String command = cmd.trim();
+            if (command.startsWith("intent:")) {
+                String[] parts = command.split(":", 5);
+                if (parts.length != 5) return;
+                try {
+                    behavior.onExternalIntent(parts[4], parts[1], parts[2], Float.parseFloat(parts[3]));
+                } catch (NumberFormatException ignored) {
+                    System.err.println("[Behavior] 无效强度: " + parts[3]);
+                }
+                return;
+            }
             if (command.startsWith("action:")) {
                 behavior.onExternalAction(command.substring("action:".length()));
                 return;

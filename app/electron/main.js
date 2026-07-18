@@ -35,6 +35,8 @@ const ALLOWED_PET_ACTIONS = new Set([
   'SPECIAL',
   'TOUCH'
 ])
+const ALLOWED_PET_EMOTIONS = new Set(['CALM', 'ALERT', 'FOCUSED', 'TIRED', 'DISPLEASED'])
+const ALLOWED_PET_MODES = new Set(['IDLE', 'CONVERSATION', 'READING', 'WORK', 'SLEEPING'])
 const isDev = !app.isPackaged
 const projectRoot = path.resolve(__dirname, '../..')
 
@@ -75,7 +77,8 @@ let hitRegions = {
 const runtimeStatus = {
   backend: 'checking',
   pet: 'checking',
-  aiConfigured: null
+  aiConfigured: null,
+  behavior: { action: 'RELAX', emotion: 'CALM', mode: 'IDLE', intensity: 0.2 }
 }
 
 const hasSingleInstanceLock = app.requestSingleInstanceLock()
@@ -366,6 +369,27 @@ function registerIpcHandlers() {
     if (!ALLOWED_PET_ACTIONS.has(normalized)) return false
     return sendToPet(`action:${normalized}`)
   })
+  ipcMain.handle('pet-behavior', async (_, behavior = {}) => {
+    const normalized = normalizePetBehavior(behavior)
+    runtimeStatus.behavior = normalized
+    broadcastRuntimeStatus()
+    return sendToPet(
+      `intent:${normalized.emotion}:${normalized.mode}:${normalized.intensity.toFixed(2)}:${normalized.action}`
+    )
+  })
+}
+
+function normalizePetBehavior(behavior) {
+  const actionCandidate = typeof behavior.action === 'string' ? behavior.action.toUpperCase() : ''
+  const emotionCandidate = typeof behavior.emotion === 'string' ? behavior.emotion.toUpperCase() : ''
+  const modeCandidate = typeof behavior.mode === 'string' ? behavior.mode.toUpperCase() : ''
+  const rawIntensity = Number(behavior.intensity)
+  return {
+    action: ALLOWED_PET_ACTIONS.has(actionCandidate) ? actionCandidate : 'RELAX',
+    emotion: ALLOWED_PET_EMOTIONS.has(emotionCandidate) ? emotionCandidate : 'CALM',
+    mode: ALLOWED_PET_MODES.has(modeCandidate) ? modeCandidate : 'CONVERSATION',
+    intensity: Number.isFinite(rawIntensity) ? Math.max(0, Math.min(rawIntensity, 1)) : 0.35
+  }
 }
 
 function getSetupState() {

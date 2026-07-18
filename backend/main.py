@@ -37,10 +37,16 @@ ALLOWED_ACTIONS = {
     "SPECIAL",
     "TOUCH",
 }
+ALLOWED_EMOTIONS = {"CALM", "ALERT", "FOCUSED", "TIRED", "DISPLEASED"}
+ALLOWED_MODES = {"IDLE", "CONVERSATION", "READING", "WORK", "SLEEPING"}
 ACTION_INSTRUCTION = """
-根据本轮回复的语气，在回复最后单独输出一个动作标签：<action>动作名</action>。
+根据本轮回复的语气，在回复最后单独输出以下四个状态标签：
+<emotion>情绪</emotion><mode>模式</mode><intensity>强度</intensity><action>动作名</action>
+情绪只能是 CALM、ALERT、FOCUSED、TIRED、DISPLEASED 之一。
+模式只能是 IDLE、CONVERSATION、READING、WORK、SLEEPING 之一。
+强度是 0.0 到 1.0 之间的小数。
 动作名只能是 RELAX、SIT、SLEEP、MOVE_LEFT、MOVE_RIGHT、SPECIAL、TOUCH 之一。
-标签不会展示给用户，不要解释标签，不要输出其他指令。
+这些标签不会展示给用户，不要解释标签，不要输出其他指令。
 """.strip()
 
 # ── 静态资源路径 ────────────────────────────────────────────
@@ -173,7 +179,7 @@ async def chat(req: ChatRequest):
         if not isinstance(content, str):
             raise TypeError("response content is not text")
         content, extracted_memories = memory_service.extract(content)
-        reply, action = parse_assistant_response(content)
+        reply, action, behavior = parse_assistant_response(content)
     except httpx.TimeoutException as error:
         raise HTTPException(504, "DeepSeek 响应超时") from error
     except httpx.HTTPStatusError as error:
@@ -207,6 +213,7 @@ async def chat(req: ChatRequest):
         "session_id": req.session_id,
         "sources": response_sources,
         "action": action,
+        "behavior": behavior,
         "memory_updates": len(captured_memories),
     }
 
@@ -386,12 +393,38 @@ def build_system_prompt(sources: list[dict], memory_context: str = "", auto_capt
     return f"{KALTSIT_SYSTEM_PROMPT}{memory_context}{context}\n\n{ACTION_INSTRUCTION}{memory_instruction}"
 
 
-def parse_assistant_response(content: str) -> tuple[str, str]:
+def parse_assistant_response(content: str) -> tuple[str, str, dict]:
     matches = re.findall(r"<action>\s*([A-Z_]+)\s*</action>", content, flags=re.IGNORECASE)
     candidate = matches[-1].upper() if matches else "RELAX"
     action = candidate if candidate in ALLOWED_ACTIONS else "RELAX"
-    reply = re.sub(r"\s*<action>\s*[A-Z_]+\s*</action>\s*", "", content, flags=re.IGNORECASE).strip()
-    return reply, action
+    emotion_matches = re.findall(r"<emotion>\s*([A-Z_]+)\s*</emotion>", content, flags=re.IGNORECASE)
+    mode_matches = re.findall(r"<mode>\s*([A-Z_]+)\s*</mode>", content, flags=re.IGNORECASE)
+    intensity_matches = re.findall(r"<intensity>\s*([0-9.]+)\s*</intensity>", content, flags=re.IGNORECASE)
+
+    default_emotion = "TIRED" if action == "SLEEP" else "CALM"
+    default_mode = "SLEEPING" if action == "SLEEP" else "CONVERSATION"
+    emotion_candidate = emotion_matches[-1].upper() if emotion_matches else default_emotion
+    mode_candidate = mode_matches[-1].upper() if mode_matches else default_mode
+    emotion = emotion_candidate if emotion_candidate in ALLOWED_EMOTIONS else default_emotion
+    mode = mode_candidate if mode_candidate in ALLOWED_MODES else default_mode
+    try:
+        intensity = max(0.0, min(float(intensity_matches[-1]), 1.0)) if intensity_matches else 0.35
+    except ValueError:
+        intensity = 0.35
+
+    reply = re.sub(
+        r"\s*<(action|emotion|mode|intensity)>.*?</\1>\s*",
+        "",
+        content,
+        flags=re.IGNORECASE | re.DOTALL,
+    ).strip()
+    behavior = {
+        "action": action,
+        "emotion": emotion,
+        "mode": mode,
+        "intensity": round(intensity, 2),
+    }
+    return reply, action, behavior
 
 
 if __name__ == "__main__":

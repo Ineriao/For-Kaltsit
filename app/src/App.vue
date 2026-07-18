@@ -212,7 +212,8 @@ async function handleSend(text) {
       .replace(/Dr\.\{@nickname\}/g, getDoctorName())
       .replace(/\{@nickname\}/g, getDoctorName())
     pendingSources = response.sources || []
-    window.electronAPI?.triggerPetAction(response.action || 'RELAX')
+    if (response.behavior) window.electronAPI?.triggerPetBehavior(response.behavior)
+    else window.electronAPI?.triggerPetAction(response.action || 'RELAX')
     replyPages.value = paginateReply(pendingReply)
     replyPageIndex.value = 0
     replyCommitted = false

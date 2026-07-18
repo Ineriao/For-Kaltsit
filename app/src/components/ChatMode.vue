@@ -142,7 +142,7 @@
 
         <div class="dock-status">
           <span :class="`status-${runtimeStatus.backend}`">AI {{ backendLabel }}</span>
-          <span>PET {{ petLabel }}</span>
+          <span>PET {{ petLabel }} · {{ behaviorLabel }}</span>
           <span>{{ inputText.length.toString().padStart(3, '0') }} / 500</span>
         </div>
       </footer>
@@ -330,6 +330,7 @@
             <dl>
               <div><dt>AI 服务</dt><dd>{{ backendLabel }}</dd></div>
               <div><dt>桌宠服务</dt><dd>{{ petLabel }}</dd></div>
+              <div><dt>行为状态</dt><dd>{{ behaviorLabel }}</dd></div>
               <div><dt>语音识别</dt><dd>PENDING</dd></div>
             </dl>
           </section>
@@ -483,6 +484,11 @@ const petLabel = computed(() => ({
   checking: 'CHECKING',
   error: 'OFFLINE'
 })[props.runtimeStatus.pet] || 'OFFLINE')
+
+const behaviorLabel = computed(() => {
+  const behavior = props.runtimeStatus.behavior || {}
+  return `${behavior.emotion || 'CALM'} / ${behavior.mode || 'IDLE'}`
+})
 
 watch(() => props.messages.length, async () => {
   await nextTick()

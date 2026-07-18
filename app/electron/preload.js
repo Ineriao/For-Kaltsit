@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   downloadEmbeddingModel: () => ipcRenderer.invoke('knowledge:download-model'),
   importEmbeddingModel: () => ipcRenderer.invoke('knowledge:import-model'),
   triggerPetAction: action => ipcRenderer.invoke('pet-action', action),
+  triggerPetBehavior: behavior => ipcRenderer.invoke('pet-behavior', behavior),
   onOpenChat: callback => subscribe('open-chat', callback),
   onRuntimeStatus: callback => subscribe('runtime-status', callback),
   onForceCloseSettings: callback => subscribe('settings-force-close', callback),
