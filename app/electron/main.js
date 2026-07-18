@@ -1,4 +1,16 @@
-const { app, BrowserWindow, ipcMain, Menu, nativeImage, screen, Tray } = require('electron')
+const {
+  app,
+  BrowserWindow,
+  clipboard,
+  desktopCapturer,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  screen,
+  shell,
+  Tray
+} = require('electron')
 const { spawn } = require('child_process')
 const fs = require('fs')
 const http = require('http')
@@ -15,6 +27,7 @@ const {
   selectAndImportEmbeddingModel,
   selectKnowledgeFiles
 } = require('./knowledge-manager')
+const { DesktopTools } = require('./desktop-tools')
 
 const COLLAPSED_SIZE = { width: 500, height: 700 }
 const EXPANDED_SIZE = { width: 860, height: 700 }
@@ -42,6 +55,7 @@ const projectRoot = path.resolve(__dirname, '../..')
 
 let mainWindow = null
 let tray = null
+let desktopTools = null
 let petSocketServer = null
 let backendProcess = null
 let petProcess = null
@@ -100,6 +114,14 @@ if (!hasSingleInstanceLock) {
 }
 
 async function bootstrap() {
+  desktopTools = new DesktopTools({
+    userData: app.getPath('userData'),
+    clipboard,
+    desktopCapturer,
+    dialog,
+    screen,
+    shell
+  })
   await startPetSocketServer()
   createWindow()
   createTray()
@@ -377,6 +399,18 @@ function registerIpcHandlers() {
       `intent:${normalized.emotion}:${normalized.mode}:${normalized.intensity.toFixed(2)}:${normalized.action}`
     )
   })
+  ipcMain.handle('tools:get-state', () => desktopTools.getState())
+  ipcMain.handle('tools:set-permission', (_, permission, enabled) => {
+    return desktopTools.setPermission(permission, enabled)
+  })
+  ipcMain.handle('tools:read-clipboard', () => desktopTools.readClipboard())
+  ipcMain.handle('tools:select-file', () => desktopTools.selectTextFile(mainWindow))
+  ipcMain.handle('tools:choose-search-root', () => desktopTools.chooseSearchRoot(mainWindow))
+  ipcMain.handle('tools:search-files', (_, query) => desktopTools.searchFiles(query))
+  ipcMain.handle('tools:show-search-result', (_, relativePath) => {
+    return desktopTools.showSearchResult(relativePath)
+  })
+  ipcMain.handle('tools:capture-screen', () => desktopTools.capturePrimaryScreen())
 }
 
 function normalizePetBehavior(behavior) {

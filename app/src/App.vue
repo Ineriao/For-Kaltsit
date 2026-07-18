@@ -189,7 +189,7 @@ function minimizeWindow() {
   window.electronAPI?.minimizeWindow()
 }
 
-async function handleSend(text) {
+async function handleSend(text, toolContext = null) {
   if (!text.trim() || isResponding.value) return
   if (!currentSessionId.value) {
     try {
@@ -207,7 +207,7 @@ async function handleSend(text) {
   isResponding.value = true
 
   try {
-    const response = await sendMessage(messages.value, currentSessionId.value)
+    const response = await sendMessage(messages.value, currentSessionId.value, toolContext)
     pendingReply = response.reply
       .replace(/Dr\.\{@nickname\}/g, getDoctorName())
       .replace(/\{@nickname\}/g, getDoctorName())

@@ -104,6 +104,11 @@
 
         <p v-if="errorText" class="error-line"><span>!</span>{{ errorText }}</p>
 
+        <div v-if="toolContext" class="tool-context-chip">
+          <span>CTX · {{ toolContext.label }}</span>
+          <button type="button" aria-label="移除本地工具上下文" @click="toolContext = null">×</button>
+        </div>
+
         <form class="composer" @submit.prevent="submit">
           <span class="prompt-mark">›</span>
           <input
@@ -164,7 +169,7 @@
         <nav class="settings-tabs" aria-label="设置分类">
           <button type="button" :class="{ active: settingsView === 'general' }" @click="settingsView = 'general'">常规</button>
           <button type="button" :class="{ active: settingsView === 'memory' }" @click="settingsView = 'memory'">记忆</button>
-          <button type="button" disabled>工具</button>
+          <button type="button" :class="{ active: settingsView === 'tools' }" @click="settingsView = 'tools'">工具</button>
           <button type="button" disabled>诊断</button>
         </nav>
 
@@ -341,6 +346,11 @@
             :backend-ready="runtimeStatus.backend === 'ready'"
             :refresh-token="messages.length"
           />
+
+          <DesktopToolsPanel
+            v-show="settingsView === 'tools'"
+            @use-context="setToolContext"
+          />
         </div>
 
         <footer v-if="settingsView === 'general'" class="settings-footer">
@@ -364,6 +374,7 @@ import {
 } from '../api/rag.js'
 import { setVolume } from '../api/voice.js'
 import MemoryPanel from './MemoryPanel.vue'
+import DesktopToolsPanel from './DesktopToolsPanel.vue'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -405,6 +416,7 @@ const inputText = ref('')
 const historyOpen = ref(false)
 const showSettings = ref(false)
 const settingsView = ref('general')
+const toolContext = ref(null)
 const composerFocused = ref(false)
 const savedNotice = ref(false)
 const newApiKey = ref('')
@@ -573,8 +585,15 @@ function navigateSubtitle(event) {
 function submit() {
   const text = inputText.value.trim()
   if (!text || !canSend.value) return
-  emit('send', text)
+  emit('send', text, toolContext.value)
   inputText.value = ''
+  toolContext.value = null
+  nextTick(() => inputEl.value?.focus())
+}
+
+function setToolContext(context) {
+  toolContext.value = context
+  closeSettings()
   nextTick(() => inputEl.value?.focus())
 }
 
@@ -1069,6 +1088,41 @@ button svg {
 }
 
 .error-line span { font-family: var(--font-mono); }
+
+.tool-context-chip {
+  max-width: 300px;
+  height: 20px;
+  position: absolute;
+  z-index: 4;
+  right: 7px;
+  bottom: 43px;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding-left: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.66);
+  background: rgba(3, 3, 3, 0.94);
+  box-shadow: 0 0 12px rgba(255, 255, 255, 0.06);
+  font: 7px/1 var(--font-display);
+  letter-spacing: 0.08em;
+}
+
+.tool-context-chip span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-context-chip button {
+  width: 20px;
+  height: 18px;
+  flex: 0 0 auto;
+  color: rgba(255, 255, 255, 0.58);
+  transition: color 160ms ease, background 160ms ease;
+}
+
+.tool-context-chip button:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
 
 .composer {
   height: 33px;
