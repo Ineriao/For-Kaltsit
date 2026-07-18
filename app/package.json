@@ -30,7 +30,7 @@
   "build": {
     "appId": "com.ine.kaltsit",
     "productName": "凯尔希",
-    "artifactName": "${productName}-Setup-${version}.${ext}",
+    "artifactName": "Kaltsit-Setup-${version}.${ext}",
     "asar": true,
     "electronDist": "node_modules/electron/dist",
     "directories": { "output": "dist-electron" },
@@ -53,7 +53,7 @@
     "files": ["dist/**", "electron/**", "public/**"],
     "extraResources": [
       {
-        "from": "../backend/dist-onefile-v6/kaltsit-backend.exe",
+        "from": "../backend/dist-onefile-v8/kaltsit-backend.exe",
         "to": "runtime/backend/kaltsit-backend.exe"
       },
       {

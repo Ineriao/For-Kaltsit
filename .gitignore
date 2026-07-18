@@ -15,6 +15,8 @@ dist-electron-final-v2/
 dist-electron-final-v4/
 dist-electron-final-v6/
 dist-electron-final-v7/
+dist-electron-final-v8/
+dist-electron-final-v9/
 app/dist/
 kaltsit-pet/build/
 kaltsit-pet/.gradle/
@@ -46,6 +48,8 @@ backend/build-pyinstaller-onefile-v5/
 backend/dist-onefile-v5/
 backend/build-pyinstaller-onefile-v6/
 backend/dist-onefile-v6/
+backend/build-pyinstaller-onefile-v8/
+backend/dist-onefile-v8/
 .build-tools/
 *.db-wal
 *.db-shm
