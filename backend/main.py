@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 from pydantic import BaseModel, Field
 
 from database import Database
+from memory import MEMORY_INSTRUCTION, MemoryService
 from prompt import KALTSIT_SYSTEM_PROMPT
 from rag import RagService
 
@@ -25,6 +26,7 @@ DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.co
 DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash").strip()
 database = Database()
 rag_service = RagService(database)
+memory_service = MemoryService(database)
 
 ALLOWED_ACTIONS = {
     "RELAX",
@@ -109,6 +111,20 @@ class KnowledgeDocumentCreate(BaseModel):
     content: str = Field(min_length=1, max_length=5_242_880)
 
 
+class MemoryCreate(BaseModel):
+    category: str = Field(min_length=1, max_length=24)
+    content: str = Field(min_length=1, max_length=180)
+
+
+class MemoryUpdate(MemoryCreate):
+    enabled: bool = True
+
+
+class MemorySettingsUpdate(BaseModel):
+    enabled: bool
+    auto_capture: bool
+
+
 # ── 接口 ────────────────────────────────────────────────────
 @app.post("/chat")
 async def chat(req: ChatRequest):
@@ -132,7 +148,13 @@ async def chat(req: ChatRequest):
             raise HTTPException(404, "会话不存在") from error
 
     sources = await asyncio.to_thread(rag_service.retrieve, history[-1]["content"])
-    system_prompt = build_system_prompt(sources)
+    memory_settings = memory_service.get_settings()
+    memory_context = memory_service.build_context()
+    system_prompt = build_system_prompt(
+        sources,
+        memory_context,
+        memory_settings["auto_capture"] and memory_settings["enabled"],
+    )
     messages = [{"role": "system", "content": system_prompt}, *history]
     try:
         response = await app.state.deepseek_client.post(
@@ -150,6 +172,7 @@ async def chat(req: ChatRequest):
         content = data["choices"][0]["message"]["content"]
         if not isinstance(content, str):
             raise TypeError("response content is not text")
+        content, extracted_memories = memory_service.extract(content)
         reply, action = parse_assistant_response(content)
     except httpx.TimeoutException as error:
         raise HTTPException(504, "DeepSeek 响应超时") from error
@@ -174,11 +197,17 @@ async def chat(req: ChatRequest):
     ]
     if req.session_id:
         database.append_message(req.session_id, "assistant", reply, response_sources)
+    captured_memories = memory_service.capture(
+        extracted_memories,
+        req.session_id,
+        history[-1]["content"],
+    )
     return {
         "reply": reply,
         "session_id": req.session_id,
         "sources": response_sources,
         "action": action,
+        "memory_updates": len(captured_memories),
     }
 
 
@@ -212,6 +241,50 @@ async def delete_session(session_id: str):
     if not database.delete_session(session_id):
         raise HTTPException(404, "会话不存在")
     return Response(status_code=204)
+
+
+@app.get("/memories")
+async def list_memories():
+    return {
+        "memories": database.list_memories(),
+        "settings": memory_service.get_settings(),
+    }
+
+
+@app.post("/memories", status_code=201)
+async def create_memory(request: MemoryCreate):
+    try:
+        return memory_service.create_manual(request.category, request.content)
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+
+
+@app.patch("/memories/{memory_id}")
+async def update_memory(memory_id: str, request: MemoryUpdate):
+    try:
+        memory = memory_service.update_memory(
+            memory_id,
+            request.category,
+            request.content,
+            request.enabled,
+        )
+    except ValueError as error:
+        raise HTTPException(400, str(error)) from error
+    if not memory:
+        raise HTTPException(404, "记忆不存在")
+    return memory
+
+
+@app.delete("/memories/{memory_id}", status_code=204)
+async def delete_memory(memory_id: str):
+    if not database.delete_memory(memory_id):
+        raise HTTPException(404, "记忆不存在")
+    return Response(status_code=204)
+
+
+@app.patch("/memory/settings")
+async def update_memory_settings(request: MemorySettingsUpdate):
+    return memory_service.update_settings(request.enabled, request.auto_capture)
 
 
 @app.get("/rag/status")
@@ -297,7 +370,7 @@ async def resource_manifest():
     }
 
 
-def build_system_prompt(sources: list[dict]) -> str:
+def build_system_prompt(sources: list[dict], memory_context: str = "", auto_capture: bool = True) -> str:
     context = ""
     if sources:
         blocks = [
@@ -309,7 +382,8 @@ def build_system_prompt(sources: list[dict]) -> str:
             "资料与既有设定冲突时，明确指出不确定性。\n\n"
             + "\n\n".join(blocks)
         )
-    return f"{KALTSIT_SYSTEM_PROMPT}{context}\n\n{ACTION_INSTRUCTION}"
+    memory_instruction = f"\n\n{MEMORY_INSTRUCTION}" if auto_capture else ""
+    return f"{KALTSIT_SYSTEM_PROMPT}{memory_context}{context}\n\n{ACTION_INSTRUCTION}{memory_instruction}"
 
 
 def parse_assistant_response(content: str) -> tuple[str, str]:

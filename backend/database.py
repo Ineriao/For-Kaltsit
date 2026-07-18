@@ -66,6 +66,31 @@ class Database:
 
                 CREATE INDEX IF NOT EXISTS idx_knowledge_chunks_document
                 ON knowledge_chunks(document_id, position);
+
+                CREATE TABLE IF NOT EXISTS memories (
+                    id TEXT PRIMARY KEY,
+                    category TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    source_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+                    source_excerpt TEXT NOT NULL DEFAULT '',
+                    origin TEXT NOT NULL CHECK (origin IN ('automatic', 'manual')),
+                    enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+                    confidence REAL NOT NULL DEFAULT 1.0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_unique_content
+                ON memories(category, content COLLATE NOCASE);
+
+                CREATE INDEX IF NOT EXISTS idx_memories_enabled
+                ON memories(enabled, updated_at DESC);
+
+                CREATE TABLE IF NOT EXISTS app_settings (
+                    key TEXT PRIMARY KEY,
+                    value_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -280,6 +305,129 @@ class Database:
                 ((blob, dimension, chunk_id) for chunk_id, blob, dimension in embeddings),
             )
 
+    def list_memories(self, enabled_only: bool = False, limit: int = 100) -> list[dict]:
+        where = "WHERE enabled = 1" if enabled_only else ""
+        with self.connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT id, category, content, source_session_id, source_excerpt,
+                       origin, enabled, confidence, created_at, updated_at
+                FROM memories {where}
+                ORDER BY updated_at DESC LIMIT ?
+                """,
+                (max(1, min(limit, 500)),),
+            ).fetchall()
+        return [self._memory_from_row(row) for row in rows]
+
+    def get_memory(self, memory_id: str) -> dict | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, category, content, source_session_id, source_excerpt,
+                       origin, enabled, confidence, created_at, updated_at
+                FROM memories WHERE id = ?
+                """,
+                (memory_id,),
+            ).fetchone()
+        return self._memory_from_row(row) if row else None
+
+    def create_memory(
+        self,
+        category: str,
+        content: str,
+        source_session_id: str | None = None,
+        source_excerpt: str = "",
+        origin: str = "manual",
+        confidence: float = 1.0,
+    ) -> dict:
+        timestamp = utc_now()
+        memory_id = str(uuid.uuid4())
+        existing_id = None
+        with self.connect() as connection:
+            existing = connection.execute(
+                "SELECT id FROM memories WHERE category = ? AND content = ? COLLATE NOCASE",
+                (category, content),
+            ).fetchone()
+            if existing:
+                existing_id = existing["id"]
+                connection.execute(
+                    "UPDATE memories SET enabled = 1, updated_at = ? WHERE id = ?",
+                    (timestamp, existing_id),
+                )
+            else:
+                connection.execute(
+                    """
+                    INSERT INTO memories(
+                        id, category, content, source_session_id, source_excerpt,
+                        origin, enabled, confidence, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+                    """,
+                    (
+                        memory_id,
+                        category,
+                        content,
+                        source_session_id,
+                        source_excerpt,
+                        origin,
+                        max(0.0, min(float(confidence), 1.0)),
+                        timestamp,
+                        timestamp,
+                    ),
+                )
+        return self.get_memory(existing_id or memory_id)
+
+    def update_memory(
+        self,
+        memory_id: str,
+        category: str,
+        content: str,
+        enabled: bool,
+    ) -> dict | None:
+        with self.connect() as connection:
+            try:
+                cursor = connection.execute(
+                    """
+                    UPDATE memories
+                    SET category = ?, content = ?, enabled = ?, updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (category, content, int(enabled), utc_now(), memory_id),
+                )
+            except sqlite3.IntegrityError as error:
+                raise ValueError("相同记忆已存在") from error
+        return self.get_memory(memory_id) if cursor.rowcount else None
+
+    def delete_memory(self, memory_id: str) -> bool:
+        with self.connect() as connection:
+            cursor = connection.execute("DELETE FROM memories WHERE id = ?", (memory_id,))
+        return cursor.rowcount > 0
+
+    def get_setting(self, key: str, default=None):
+        with self.connect() as connection:
+            row = connection.execute(
+                "SELECT value_json FROM app_settings WHERE key = ?",
+                (key,),
+            ).fetchone()
+        if not row:
+            return default
+        try:
+            return json.loads(row["value_json"])
+        except (json.JSONDecodeError, TypeError):
+            return default
+
+    def set_setting(self, key: str, value) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO app_settings(key, value_json, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET
+                    value_json = excluded.value_json,
+                    updated_at = excluded.updated_at
+                """,
+                (key, json.dumps(value, ensure_ascii=False), utc_now()),
+            )
+
     @staticmethod
     def _message_from_row(row: sqlite3.Row) -> dict:
         message = dict(row)
@@ -288,3 +436,9 @@ class Database:
         except (json.JSONDecodeError, TypeError):
             message["sources"] = []
         return message
+
+    @staticmethod
+    def _memory_from_row(row: sqlite3.Row) -> dict:
+        memory = dict(row)
+        memory["enabled"] = bool(memory["enabled"])
+        return memory

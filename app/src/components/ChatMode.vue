@@ -161,7 +161,15 @@
           </button>
         </header>
 
+        <nav class="settings-tabs" aria-label="设置分类">
+          <button type="button" :class="{ active: settingsView === 'general' }" @click="settingsView = 'general'">常规</button>
+          <button type="button" :class="{ active: settingsView === 'memory' }" @click="settingsView = 'memory'">记忆</button>
+          <button type="button" disabled>工具</button>
+          <button type="button" disabled>诊断</button>
+        </nav>
+
         <div class="settings-scroll">
+          <div v-show="settingsView === 'general'" class="settings-view">
           <section class="setting-section session-section">
             <header>
               <span>会话记录</span>
@@ -325,9 +333,16 @@
               <div><dt>语音识别</dt><dd>PENDING</dd></div>
             </dl>
           </section>
+          </div>
+
+          <MemoryPanel
+            v-show="settingsView === 'memory'"
+            :backend-ready="runtimeStatus.backend === 'ready'"
+            :refresh-token="messages.length"
+          />
         </div>
 
-        <footer class="settings-footer">
+        <footer v-if="settingsView === 'general'" class="settings-footer">
           <span :class="{ visible: savedNotice }">设置已保存</span>
           <button type="button" class="save-button" @click="saveAll">保存设置</button>
         </footer>
@@ -347,6 +362,7 @@ import {
   reloadRagModel
 } from '../api/rag.js'
 import { setVolume } from '../api/voice.js'
+import MemoryPanel from './MemoryPanel.vue'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -387,6 +403,7 @@ const historyEl = ref(null)
 const inputText = ref('')
 const historyOpen = ref(false)
 const showSettings = ref(false)
+const settingsView = ref('general')
 const composerFocused = ref(false)
 const savedNotice = ref(false)
 const newApiKey = ref('')
@@ -1268,12 +1285,49 @@ button svg {
   font-weight: 500;
 }
 
+.settings-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  margin-top: 10px;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.settings-tabs button {
+  min-height: 30px;
+  border: 0;
+  color: rgba(255, 255, 255, 0.36);
+  background: rgba(2, 2, 2, 0.86);
+  font: 9px/1 'Novecento Sans', sans-serif;
+  letter-spacing: 0.12em;
+  transition: color 180ms ease, background 180ms ease;
+}
+
+.settings-tabs button:hover:not(:disabled),
+.settings-tabs button.active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.settings-tabs button.active {
+  box-shadow: inset 0 -1px 0 #fff;
+}
+
+.settings-tabs button:focus-visible {
+  outline: 1px solid #fff;
+  outline-offset: -2px;
+}
+
+.settings-tabs button:disabled { opacity: 0.26; }
+
 .settings-scroll {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
   padding: 14px 2px 12px 0;
 }
+
+.settings-view { display: contents; }
 
 .setting-section {
   margin-bottom: 11px;
