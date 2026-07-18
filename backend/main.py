@@ -1,12 +1,15 @@
 import asyncio
 import os
 import re
+import secrets
+import sqlite3
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException, Response
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field
@@ -24,6 +27,7 @@ if config_dir:
 DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
 DEEPSEEK_BASE_URL = os.environ.get("DEEPSEEK_BASE_URL", "https://api.deepseek.com").rstrip("/")
 DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash").strip()
+LOCAL_AUTH_TOKEN = os.environ.get("KALTSIT_LOCAL_TOKEN", "").strip()
 database = Database()
 rag_service = RagService(database)
 memory_service = MemoryService(database)
@@ -77,10 +81,24 @@ app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["null", "http://127.0.0.1:5173"],
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["Content-Type", "X-Kaltsit-Token"],
 )
+
+
+@app.middleware("http")
+async def require_local_token(request: Request, call_next):
+    public_read = request.method == "GET" and (
+        request.url.path == "/health"
+        or request.url.path.startswith("/assets/")
+        or request.url.path.startswith("/voice/")
+    )
+    if LOCAL_AUTH_TOKEN and request.method != "OPTIONS" and not public_read:
+        supplied = request.headers.get("X-Kaltsit-Token", "")
+        if not secrets.compare_digest(supplied, LOCAL_AUTH_TOKEN):
+            return JSONResponse({"detail": "本地接口认证失败"}, status_code=401)
+    return await call_next(request)
 
 # 挂载静态目录
 if VOICE_DIR.exists():
@@ -378,6 +396,40 @@ async def health():
         "configured": bool(DEEPSEEK_API_KEY),
         "assets": ASSETS_DIR.exists(),
     }
+
+
+@app.get("/maintenance/diagnostics")
+async def backend_diagnostics():
+    return {
+        **database.diagnostics(),
+        "rag": rag_service.status(),
+        "memory": memory_service.get_settings(),
+    }
+
+
+@app.get("/maintenance/backups")
+async def list_database_backups():
+    return {"backups": database.list_backups()}
+
+
+@app.post("/maintenance/backups", status_code=201)
+async def create_database_backup():
+    try:
+        return await asyncio.to_thread(database.create_backup)
+    except sqlite3.Error as error:
+        print(f"[database] 备份失败: {error}")
+        raise HTTPException(500, "数据库备份失败") from error
+
+
+@app.post("/maintenance/backups/{filename}/restore")
+async def restore_database_backup(filename: str):
+    try:
+        return await asyncio.to_thread(database.restore_backup, filename)
+    except FileNotFoundError as error:
+        raise HTTPException(404, "数据库备份不存在") from error
+    except (ValueError, sqlite3.Error) as error:
+        print(f"[database] 恢复失败: {error}")
+        raise HTTPException(400, str(error)) from error
 
 
 @app.get("/resource-manifest")

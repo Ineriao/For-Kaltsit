@@ -12,6 +12,7 @@ const {
   Tray
 } = require('electron')
 const { spawn } = require('child_process')
+const { randomBytes } = require('crypto')
 const fs = require('fs')
 const http = require('http')
 const net = require('net')
@@ -28,6 +29,8 @@ const {
   selectKnowledgeFiles
 } = require('./knowledge-manager')
 const { DesktopTools } = require('./desktop-tools')
+const { DiagnosticsManager } = require('./diagnostics-manager')
+const { UpdateManager } = require('./update-manager')
 
 const COLLAPSED_SIZE = { width: 500, height: 700 }
 const EXPANDED_SIZE = { width: 860, height: 700 }
@@ -39,6 +42,7 @@ const SPRITE_FILENAME = '立绘_凯尔希·思衡托_1.png'
 const RESTART_LIMIT = 3
 const RESTART_STABLE_MS = 30000
 const RUNTIME_MONITOR_MS = 5000
+const LOCAL_API_TOKEN = randomBytes(32).toString('hex')
 const ALLOWED_PET_ACTIONS = new Set([
   'RELAX',
   'SIT',
@@ -56,6 +60,8 @@ const projectRoot = path.resolve(__dirname, '../..')
 let mainWindow = null
 let tray = null
 let desktopTools = null
+let diagnosticsManager = null
+let updateManager = null
 let petSocketServer = null
 let backendProcess = null
 let petProcess = null
@@ -114,6 +120,16 @@ if (!hasSingleInstanceLock) {
 }
 
 async function bootstrap() {
+  diagnosticsManager = new DiagnosticsManager({
+    app,
+    dialog,
+    userData: app.getPath('userData')
+  })
+  updateManager = new UpdateManager({
+    app,
+    onState: state => mainWindow?.webContents.send('update-status', state),
+    record: (service, level, message) => diagnosticsManager.record(service, level, message)
+  })
   desktopTools = new DesktopTools({
     userData: app.getPath('userData'),
     clipboard,
@@ -136,13 +152,14 @@ async function bootstrap() {
 
   loadSpriteAlphaMask()
   await startRuntimeServices()
+  updateManager.startAutomaticCheck()
 }
 
 async function startRuntimeServices() {
-  await Promise.allSettled([
-    startBackend(),
-    startPet()
-  ])
+  const services = [startBackend()]
+  if (diagnosticsManager?.isSafeMode()) setRuntimeStatus('pet', 'disabled')
+  else services.push(startPet())
+  await Promise.allSettled(services)
   startRuntimeMonitoring()
 }
 
@@ -346,6 +363,7 @@ function registerIpcHandlers() {
     }
   })
   ipcMain.handle('runtime-status:get', () => ({ ...runtimeStatus }))
+  ipcMain.handle('runtime-token:get', () => LOCAL_API_TOKEN)
   ipcMain.handle('setup:get', getSetupState)
   ipcMain.handle('setup:import-assets', async () => {
     const result = await selectAndImportAssets(mainWindow)
@@ -411,6 +429,49 @@ function registerIpcHandlers() {
     return desktopTools.showSearchResult(relativePath)
   })
   ipcMain.handle('tools:capture-screen', () => desktopTools.capturePrimaryScreen())
+  ipcMain.handle('updates:get-state', () => updateManager.getState())
+  ipcMain.handle('updates:check', () => updateManager.check())
+  ipcMain.handle('updates:download', () => updateManager.download())
+  ipcMain.handle('updates:install', () => updateManager.install())
+  ipcMain.handle('diagnostics:get', () => buildDiagnosticsSnapshot())
+  ipcMain.handle('diagnostics:export', async () => {
+    const snapshot = await buildDiagnosticsSnapshot()
+    return diagnosticsManager.exportLogs(mainWindow, snapshot)
+  })
+  ipcMain.handle('diagnostics:restart-service', async (_, service) => {
+    if (service === 'backend') {
+      diagnosticsManager.record('runtime', 'info', '用户请求重启后端')
+      await restartBackend()
+      return true
+    }
+    if (service === 'pet' && !diagnosticsManager.isSafeMode()) {
+      diagnosticsManager.record('runtime', 'info', '用户请求重启桌宠')
+      await restartPet()
+      return true
+    }
+    throw new Error('服务不可重启')
+  })
+  ipcMain.handle('diagnostics:set-safe-mode', async (_, enabled) => {
+    const safeMode = diagnosticsManager.setSafeMode(enabled)
+    if (safeMode) {
+      clearTimeout(petRestartTimer)
+      petRestartTimer = null
+      petRestartRequested = Boolean(petProcess)
+      await sendToPet('quit')
+      await delay(120)
+      terminateChild(petProcess)
+      setRuntimeStatus('pet', 'disabled')
+    } else {
+      petRestartAttempts = 0
+      await startPet()
+    }
+    return buildDiagnosticsSnapshot()
+  })
+  ipcMain.handle('diagnostics:list-backups', () => backendRequest('GET', '/maintenance/backups'))
+  ipcMain.handle('diagnostics:create-backup', () => backendRequest('POST', '/maintenance/backups'))
+  ipcMain.handle('diagnostics:restore-backup', (_, filename) => {
+    return backendRequest('POST', `/maintenance/backups/${encodeURIComponent(filename)}/restore`)
+  })
 }
 
 function normalizePetBehavior(behavior) {
@@ -455,6 +516,7 @@ async function completeSetup() {
   startRuntimeServices().catch(error => {
     console.error('[runtime] 初始化后启动失败:', error)
   })
+  updateManager.startAutomaticCheck()
   return state
 }
 
@@ -535,6 +597,7 @@ async function startBackend() {
         KALTSIT_ASSETS_DIR: resolveAssetsDirectory(),
         KALTSIT_CONFIG_DIR: app.getPath('userData'),
         KALTSIT_DATA_DIR: app.getPath('userData'),
+        KALTSIT_LOCAL_TOKEN: LOCAL_API_TOKEN,
         PYTHONUNBUFFERED: '1'
       }
     })
@@ -579,6 +642,10 @@ async function startBackend() {
 
 async function startPet() {
   if (shuttingDown || petStarting) return
+  if (diagnosticsManager?.isSafeMode()) {
+    setRuntimeStatus('pet', 'disabled')
+    return
+  }
   petStarting = true
   clearTimeout(petRestartTimer)
   petRestartTimer = null
@@ -659,6 +726,7 @@ function scheduleBackendRestart() {
   backendStabilityTimer = null
   if (shuttingDown || backendRestartTimer || backendRestartAttempts >= RESTART_LIMIT) return
   backendRestartAttempts += 1
+  diagnosticsManager?.record('backend', 'warn', `计划第 ${backendRestartAttempts} 次自动重启`)
   backendRestartTimer = setTimeout(() => {
     backendRestartTimer = null
     startBackend()
@@ -685,6 +753,7 @@ function schedulePetRestart() {
   petStabilityTimer = null
   if (shuttingDown || petRestartTimer || petRestartAttempts >= RESTART_LIMIT) return
   petRestartAttempts += 1
+  diagnosticsManager?.record('pet', 'warn', `计划第 ${petRestartAttempts} 次自动重启`)
   petRestartTimer = setTimeout(() => {
     petRestartTimer = null
     startPet()
@@ -734,8 +803,16 @@ function resolveAssetsDirectory() {
 }
 
 function pipeProcessOutput(name, child) {
-  child.stdout?.on('data', data => console.log(`[${name}]`, data.toString().trimEnd()))
-  child.stderr?.on('data', data => console.error(`[${name}]`, data.toString().trimEnd()))
+  child.stdout?.on('data', data => {
+    const message = data.toString().trimEnd()
+    console.log(`[${name}]`, message)
+    diagnosticsManager?.record(name, 'info', message)
+  })
+  child.stderr?.on('data', data => {
+    const message = data.toString().trimEnd()
+    console.error(`[${name}]`, message)
+    diagnosticsManager?.record(name, 'error', message)
+  })
 }
 
 function isBackendRunning() {
@@ -762,6 +839,59 @@ function isBackendRunning() {
       resolve(false)
     })
     request.on('error', () => resolve(false))
+  })
+}
+
+function backendRequest(method, requestPath, body = null) {
+  return new Promise((resolve, reject) => {
+    const payload = body ? JSON.stringify(body) : ''
+    const request = http.request({
+      host: HOST,
+      port: BACKEND_PORT,
+      path: requestPath,
+      method,
+      headers: {
+        'X-Kaltsit-Token': LOCAL_API_TOKEN,
+        ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {})
+      }
+    }, response => {
+      let responseBody = ''
+      response.setEncoding('utf8')
+      response.on('data', chunk => { responseBody += chunk })
+      response.on('end', () => {
+        let parsed = {}
+        try {
+          parsed = responseBody ? JSON.parse(responseBody) : {}
+        } catch {
+          reject(new Error('后端返回了无效诊断数据'))
+          return
+        }
+        if (response.statusCode >= 200 && response.statusCode < 300) resolve(parsed)
+        else reject(new Error(parsed.detail || `后端请求失败 (${response.statusCode})`))
+      })
+    })
+    request.setTimeout(30000, () => request.destroy(new Error('后端诊断请求超时')))
+    request.on('error', reject)
+    if (payload) request.write(payload)
+    request.end()
+  })
+}
+
+async function buildDiagnosticsSnapshot() {
+  let backend = null
+  if (await isBackendRunning()) {
+    try {
+      backend = await backendRequest('GET', '/maintenance/diagnostics')
+    } catch (error) {
+      diagnosticsManager.record('backend', 'warn', error.message)
+    }
+  }
+  return diagnosticsManager.snapshot({
+    status: { ...runtimeStatus },
+    restartAttempts: { backend: backendRestartAttempts, pet: petRestartAttempts },
+    monitorFailures: { backend: backendMonitorFailures, pet: petMonitorFailures },
+    backend,
+    update: updateManager.getState()
   })
 }
 
@@ -831,9 +961,10 @@ async function monitorRuntime() {
   if (shuttingDown || runtimeMonitorRunning) return
   runtimeMonitorRunning = true
   try {
+    const safeMode = diagnosticsManager?.isSafeMode()
     const [backendReady, petReady] = await Promise.all([
       isBackendRunning(),
-      isPetRunning()
+      safeMode ? Promise.resolve(false) : isPetRunning()
     ])
 
     if (backendReady) {
@@ -848,7 +979,10 @@ async function monitorRuntime() {
       }
     }
 
-    if (petReady) {
+    if (safeMode) {
+      petMonitorFailures = 0
+      if (runtimeStatus.pet !== 'disabled') setRuntimeStatus('pet', 'disabled')
+    } else if (petReady) {
       petMonitorFailures = 0
       if (runtimeStatus.pet !== 'ready') markServiceReady('pet')
     } else if (!petStarting) {
@@ -883,6 +1017,7 @@ function sendToPet(command) {
 function setRuntimeStatus(service, status) {
   if (runtimeStatus[service] === status) return
   runtimeStatus[service] = status
+  diagnosticsManager?.record(service, status === 'error' ? 'error' : 'info', `状态切换为 ${status}`)
   broadcastRuntimeStatus()
 }
 
@@ -909,6 +1044,7 @@ async function requestQuit() {
 function cleanupRuntime() {
   shuttingDown = true
   clearRestartTimers()
+  updateManager?.dispose()
   petSocketServer?.close()
   tray?.destroy()
   clearInterval(mouseHitTestTimer)

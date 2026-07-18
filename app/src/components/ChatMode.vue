@@ -170,7 +170,7 @@
           <button type="button" :class="{ active: settingsView === 'general' }" @click="settingsView = 'general'">常规</button>
           <button type="button" :class="{ active: settingsView === 'memory' }" @click="settingsView = 'memory'">记忆</button>
           <button type="button" :class="{ active: settingsView === 'tools' }" @click="settingsView = 'tools'">工具</button>
-          <button type="button" disabled>诊断</button>
+          <button type="button" :class="{ active: settingsView === 'diagnostics' }" @click="settingsView = 'diagnostics'">诊断</button>
         </nav>
 
         <div class="settings-scroll">
@@ -351,6 +351,13 @@
             v-show="settingsView === 'tools'"
             @use-context="setToolContext"
           />
+
+          <DiagnosticsPanel
+            v-show="settingsView === 'diagnostics'"
+            :backend-ready="runtimeStatus.backend === 'ready'"
+            :interaction-busy="isBusy"
+            @database-restored="$emit('database-restored')"
+          />
         </div>
 
         <footer v-if="settingsView === 'general'" class="settings-footer">
@@ -375,6 +382,7 @@ import {
 import { setVolume } from '../api/voice.js'
 import MemoryPanel from './MemoryPanel.vue'
 import DesktopToolsPanel from './DesktopToolsPanel.vue'
+import DiagnosticsPanel from './DiagnosticsPanel.vue'
 
 const props = defineProps({
   messages: { type: Array, default: () => [] },
@@ -406,7 +414,8 @@ const emit = defineEmits([
   'create-session',
   'select-session',
   'rename-session',
-  'delete-session'
+  'delete-session',
+  'database-restored'
 ])
 
 const spriteEl = ref(null)
@@ -494,6 +503,7 @@ const petLabel = computed(() => ({
   ready: 'READY',
   starting: 'STARTING',
   checking: 'CHECKING',
+  disabled: 'SAFE MODE',
   error: 'OFFLINE'
 })[props.runtimeStatus.pet] || 'OFFLINE')
 

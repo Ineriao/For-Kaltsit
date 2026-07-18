@@ -10,12 +10,13 @@
     "build:pet": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-pet-runtime.ps1",
     "build:runtime": "npm run build:backend && npm run build:pet",
     "build:ui": "vite build",
-    "build": "npm run build:runtime && npm run build:ui && electron-builder",
-    "package": "npm run build:ui && electron-builder",
+    "build": "npm run build:runtime && npm run build:ui && electron-builder --publish never",
+    "package": "npm run build:ui && electron-builder --publish never",
     "electron": "electron ."
   },
   "dependencies": {
-    "axios": "^1.7.2"
+    "axios": "^1.7.2",
+    "electron-updater": "^6.8.9"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^6.0.8",
@@ -35,6 +36,12 @@
     "directories": { "output": "dist-electron" },
     "win": {
       "target": "nsis"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "Ineriao",
+      "repo": "For-Kaltsit",
+      "releaseType": "release"
     },
     "nsis": {
       "oneClick": false,

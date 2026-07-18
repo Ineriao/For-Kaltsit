@@ -9,6 +9,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setSettingsExpanded: expanded => ipcRenderer.send('settings-expanded', expanded),
   updateHitRegions: regions => ipcRenderer.send('hit-regions:update', regions),
   getRuntimeStatus: () => ipcRenderer.invoke('runtime-status:get'),
+  getLocalApiToken: () => ipcRenderer.invoke('runtime-token:get'),
   getSetupState: () => ipcRenderer.invoke('setup:get'),
   importAssets: () => ipcRenderer.invoke('setup:import-assets'),
   saveSetupApiKey: apiKey => ipcRenderer.invoke('setup:save-api-key', apiKey),
@@ -29,11 +30,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
   searchDesktopFiles: query => ipcRenderer.invoke('tools:search-files', query),
   showDesktopSearchResult: relativePath => ipcRenderer.invoke('tools:show-search-result', relativePath),
   capturePrimaryScreen: () => ipcRenderer.invoke('tools:capture-screen'),
+  getUpdateState: () => ipcRenderer.invoke('updates:get-state'),
+  checkForUpdates: () => ipcRenderer.invoke('updates:check'),
+  downloadUpdate: () => ipcRenderer.invoke('updates:download'),
+  installUpdate: () => ipcRenderer.invoke('updates:install'),
+  getDiagnostics: () => ipcRenderer.invoke('diagnostics:get'),
+  exportDiagnostics: () => ipcRenderer.invoke('diagnostics:export'),
+  restartRuntimeService: service => ipcRenderer.invoke('diagnostics:restart-service', service),
+  setSafeMode: enabled => ipcRenderer.invoke('diagnostics:set-safe-mode', enabled),
+  listDatabaseBackups: () => ipcRenderer.invoke('diagnostics:list-backups'),
+  createDatabaseBackup: () => ipcRenderer.invoke('diagnostics:create-backup'),
+  restoreDatabaseBackup: filename => ipcRenderer.invoke('diagnostics:restore-backup', filename),
   onOpenChat: callback => subscribe('open-chat', callback),
   onRuntimeStatus: callback => subscribe('runtime-status', callback),
   onForceCloseSettings: callback => subscribe('settings-force-close', callback),
   onShowSetup: callback => subscribe('setup-show', callback),
-  onSetupComplete: callback => subscribe('setup-complete', callback)
+  onSetupComplete: callback => subscribe('setup-complete', callback),
+  onUpdateStatus: callback => subscribe('update-status', callback)
 })
 
 function subscribe(channel, callback) {

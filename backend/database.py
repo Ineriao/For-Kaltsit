@@ -15,6 +15,7 @@ class Database:
         default_directory = Path(__file__).resolve().parent / ".data"
         self.data_directory = Path(os.environ.get("KALTSIT_DATA_DIR", default_directory)).expanduser().resolve()
         self.path = self.data_directory / "kaltsit.db"
+        self.backup_directory = self.data_directory / "backups"
 
     def connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10)
@@ -428,6 +429,52 @@ class Database:
                 (key, json.dumps(value, ensure_ascii=False), utc_now()),
             )
 
+    def create_backup(self, prefix: str = "kaltsit") -> dict:
+        self.backup_directory.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        filename = f"{prefix}-{timestamp}-{uuid.uuid4().hex[:6]}.db"
+        destination = self.backup_directory / filename
+        with self.connect() as source, sqlite3.connect(destination) as target:
+            source.backup(target)
+        return self._backup_info(destination)
+
+    def list_backups(self) -> list[dict]:
+        if not self.backup_directory.exists():
+            return []
+        backups = [self._backup_info(item) for item in self.backup_directory.glob("*.db") if item.is_file()]
+        return sorted(backups, key=lambda item: item["created_at"], reverse=True)
+
+    def restore_backup(self, filename: str) -> dict:
+        if Path(filename).name != filename or not filename.endswith(".db"):
+            raise ValueError("备份文件名无效")
+        source_path = (self.backup_directory / filename).resolve()
+        if source_path.parent != self.backup_directory.resolve() or not source_path.is_file():
+            raise FileNotFoundError(filename)
+
+        with sqlite3.connect(source_path) as verification:
+            result = verification.execute("PRAGMA quick_check").fetchone()
+            if not result or result[0] != "ok":
+                raise ValueError("备份数据库完整性检查失败")
+
+        recovery_backup = self.create_backup("pre-restore")
+        with sqlite3.connect(source_path) as source, self.connect() as target:
+            source.backup(target)
+        self.initialize()
+        return {"restored": self._backup_info(source_path), "recovery_backup": recovery_backup}
+
+    def diagnostics(self) -> dict:
+        counts = {}
+        with self.connect() as connection:
+            for table in ("sessions", "messages", "memories", "documents", "knowledge_chunks"):
+                counts[table] = connection.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            integrity = connection.execute("PRAGMA quick_check").fetchone()[0]
+        return {
+            "database_size": self.path.stat().st_size if self.path.exists() else 0,
+            "integrity": integrity,
+            "counts": counts,
+            "backups": len(self.list_backups()),
+        }
+
     @staticmethod
     def _message_from_row(row: sqlite3.Row) -> dict:
         message = dict(row)
@@ -442,3 +489,12 @@ class Database:
         memory = dict(row)
         memory["enabled"] = bool(memory["enabled"])
         return memory
+
+    @staticmethod
+    def _backup_info(backup_path: Path) -> dict:
+        stats = backup_path.stat()
+        return {
+            "name": backup_path.name,
+            "size": stats.st_size,
+            "created_at": datetime.fromtimestamp(stats.st_mtime, timezone.utc).isoformat(timespec="seconds"),
+        }

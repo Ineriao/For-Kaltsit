@@ -30,6 +30,7 @@
       @select-session="selectSession"
       @rename-session="handleRenameSession"
       @delete-session="handleDeleteSession"
+      @database-restored="handleDatabaseRestored"
     />
   </div>
 </template>
@@ -296,6 +297,14 @@ async function handleDeleteSession(sessionId) {
   localStorage.removeItem('kaltsit_current_session')
   if (sessions.value.length) await selectSession(sessions.value[0].id)
   else await createNewSession()
+}
+
+async function handleDatabaseRestored() {
+  currentSessionId.value = null
+  sessions.value = []
+  localStorage.removeItem('kaltsit_current_session')
+  setConversationMessages([{ role: 'assistant', text: INITIAL_GREETING }])
+  await initializeSessions()
 }
 
 function setConversationMessages(nextMessages) {
