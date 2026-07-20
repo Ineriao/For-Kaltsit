@@ -23,9 +23,6 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
     private boolean isMouseDragging = false;
     private boolean isMouseDown     = false;
     private int     mouseButton     = 0;
-    private int     mouseDeltaX     = 0;
-    private int     mouseDeltaY     = 0;
-    private int     lastDragDeltaX  = 0;
 
     // 拖拽起始记录
     private int   dragStartMouseX = 0, dragStartMouseY = 0;
@@ -33,9 +30,6 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
 
     // 双击检测
     private long  lastClickTime = 0;
-
-    // 参照 ArkPets：windowPosition 缓动插值，拖动时 setToEnd() 立刻跳到目标
-    private TransitionVector2 windowPosition;
 
     @Override
     public void create() {
@@ -64,11 +58,8 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
         physics.setWorldArea(screenH - taskbarH, screenW);
         physics.setPosition(screenW / 2f, 0f);
 
-        // 参照 ArkPets：windowPosition 缓动插值器（0.1s 过渡）
-        windowPosition = new TransitionVector2(EasingFunction.EASE_OUT_SINE, 0.1f);
-        windowPosition.reset(physics.getX(), getWindowY());
-        windowPosition.setToEnd();
-        applyWindowPos();
+        window.setPosition((int) physics.getX(),
+                (int) (screenH - taskbarH - physics.getY() - Launcher.HEIGHT));
     }
 
     @Override
@@ -113,19 +104,12 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
         }
     }
 
-    // ── 像素检测（参照 ArkPets isMouseAtSolidPixel）──────────────
-    private boolean isMouseAtSolidPixel() {
-        // ArkPets: cha.getPixel(getMouseX(), cha.camera.getHeight() - getMouseY() - 1)
-        return spine.isPixelSolid(mouseX, Launcher.HEIGHT - mouseY - 1);
-    }
-
     // ── InputProcessor（严格参照 InputApplicationAdaptor）────────
 
     @Override
     public boolean touchDown(int screenX, int screenY, int pointer, int button) {
         if (pointer > 0) return false;
         mouseX = screenX; mouseY = screenY;
-        mouseDeltaX = 0; lastDragDeltaX = 0;
         mouseButton = button;
         isMouseDown = true;
         // 起始坐标用 GetCursorPos（屏幕绝对坐标），与 onMouseDrag 保持一致
@@ -142,11 +126,6 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
     @Override
     public boolean touchDragged(int screenX, int screenY, int pointer) {
         if (pointer > 0) return false;
-        int dx = screenX - mouseX;
-        int dy = screenY - mouseY;
-        mouseDeltaX = dx;
-        mouseDeltaY = dy;
-        lastDragDeltaX = dx * lastDragDeltaX <= 0 ? dx : lastDragDeltaX + dx;
         mouseX = screenX; mouseY = screenY;
         isMouseDragging = true;
         onMouseDrag();
@@ -216,18 +195,6 @@ public class KaltsitPet extends ApplicationAdapter implements InputProcessor {
     @Override public boolean keyUp(int k)               { return false; }
     @Override public boolean keyTyped(char c)           { return false; }
     @Override public boolean scrolled(float a, float b) { return false; }
-
-    /** 参照 ArkPets：物理坐标 → 窗口 Y 坐标 */
-    private float getWindowY() {
-        return screenH - taskbarH - physics.getY() - Launcher.HEIGHT;
-    }
-
-    /** 参照 ArkPets updateWindow：用 windowPosition 插值后的位置应用到窗口 */
-    private void applyWindowPos() {
-        int wx = (int) windowPosition.now().x;
-        int wy = (int) windowPosition.now().y;
-        window.setPosition(wx, wy);
-    }
 
     public void onIpcCommand(String cmd) {
         Gdx.app.postRunnable(() -> {

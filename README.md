@@ -17,14 +17,19 @@
 - 全局点击波纹动画（源石冰蓝发光圆环）
 - **Java libGDX 桌宠**：Spine 3.8 骨骼动画，原版物理引擎（重力/摩擦/弹跳），行为状态机（Relax/Sit/Sleep/Move/Special），Win32 置顶高于任务栏，像素级点击穿透
 - **双向连接**：双击桌宠自动唤起 AI 对话界面，关闭对话界面自动回到桌宠
+- **本地记忆**：SQLite 持久化会话、长期记忆与可恢复备份
+- **本地知识库**：FTS5 关键词检索、BGE 向量检索、PDF/DOCX/图片 OCR
+- **本地语音输入**：SenseVoice Small INT8，支持静音自动发送
+- **桌面工具**：经用户逐项授权后读取剪贴板、文本文件、目录搜索或屏幕快照
+- **诊断与恢复**：运行时监控、安全模式、数据库备份和应用更新
 
 ## 技术栈
 
-- **前端**：Electron 31 + Vue 3 + Vite
-- **后端**：Python FastAPI
+- **前端**：Electron 43 + Vue 3 + Vite 8
+- **后端**：Python 3.11 + FastAPI + SQLite
 - **桌宠**：Java 17 + libGDX 1.11 + Spine Runtime 3.8.99
-- **AI**：Claude API（测试），目标切换 DeepSeek
-- **语音**：游戏原声触发，后续接入 GPT-SoVITS
+- **AI**：DeepSeek API
+- **语音**：游戏原声播放 + SenseVoice 本地识别；GPT-SoVITS 音色合成尚未接入
 
 ## 目录结构
 
@@ -46,24 +51,20 @@
 # 安装前端依赖
 cd app && npm install
 
-# 安装后端依赖
-cd backend && pip install -r requirements.txt
+# 准备 Python 3.11 后端环境
+cd app && npm run setup:backend
 
-# 配置 API Key
-cp backend/.env.example backend/.env
-# 填入 ANTHROPIC_API_KEY
+# 构建 Java 桌宠与精简运行时
+npm run build:pet
 
-# 启动后端
-cd backend && python main.py
+# 启动开发模式
+npm run dev
 
-# 启动前端（开发模式）
-cd app && npm run dev
-
-# 启动 Java 桌宠（需要 JDK 17）
-# 设置 JAVA_HOME=C:\Program Files\Microsoft\jdk-17.x.x
-cd kaltsit-pet && gradlew jar
-java -jar build/libs/kaltsit-pet-1.0.0.jar
+# 构建完整 Windows 安装包
+npm run build
 ```
+
+首次启动会要求导入 `assets` 目录并配置 DeepSeek API Key。Key 和本地接口令牌均通过 Windows 系统加密保存。
 
 ## 交互说明
 
@@ -71,9 +72,9 @@ java -jar build/libs/kaltsit-pet-1.0.0.jar
 |------|------|
 | 单击桌宠 | 触发 Interact 动画 |
 | 双击桌宠 | 展开 AI 对话界面 |
-| 右键桌宠 | 菜单（展开对话/最小化/退出） |
 | 对话界面 ✕ | 隐藏对话界面，桌宠继续显示 |
 | 拖动桌宠 | 自由移动，松手后物理落地 |
+| 系统托盘 | 展开对话、显示桌宠或退出 |
 
 ## 注意
 

@@ -12,7 +12,6 @@ const {
   Tray
 } = require('electron')
 const { spawn } = require('child_process')
-const { randomBytes } = require('crypto')
 const fs = require('fs')
 const http = require('http')
 const net = require('net')
@@ -22,7 +21,12 @@ const {
   selectAndImportAssets,
   validateAssetsDirectory
 } = require('./asset-manager')
-const { getApiKey, getPublicConfig, saveApiKey } = require('./config-store')
+const {
+  getApiKey,
+  getOrCreateLocalApiToken,
+  getPublicConfig,
+  saveApiKey
+} = require('./config-store')
 const {
   downloadEmbeddingModel,
   selectAndImportEmbeddingModel,
@@ -46,7 +50,6 @@ const SPRITE_FILENAME = '立绘_凯尔希·思衡托_1.png'
 const RESTART_LIMIT = 3
 const RESTART_STABLE_MS = 30000
 const RUNTIME_MONITOR_MS = 5000
-const LOCAL_API_TOKEN = randomBytes(32).toString('hex')
 const ALLOWED_PET_ACTIONS = new Set([
   'RELAX',
   'SIT',
@@ -62,6 +65,7 @@ const isDev = !app.isPackaged
 const projectRoot = path.resolve(__dirname, '../..')
 
 let mainWindow = null
+let localApiToken = ''
 let tray = null
 let desktopTools = null
 let diagnosticsManager = null
@@ -124,6 +128,7 @@ if (!hasSingleInstanceLock) {
 }
 
 async function bootstrap() {
+  localApiToken = getOrCreateLocalApiToken()
   diagnosticsManager = new DiagnosticsManager({
     app,
     dialog,
@@ -341,20 +346,6 @@ function setWindowExpanded(expanded) {
 }
 
 function registerIpcHandlers() {
-  ipcMain.on('window-drag', (_, delta = {}) => {
-    if (!mainWindow || mainWindow.isDestroyed()) return
-    const deltaX = Number(delta.deltaX) || 0
-    const deltaY = Number(delta.deltaY) || 0
-    const [x, y] = mainWindow.getPosition()
-    mainWindow.setPosition(x + deltaX, y + deltaY)
-    enforceWindowSize()
-  })
-
-  ipcMain.on('mode-change', (_, mode) => {
-    if (mode === 'pet') showPet()
-    else openChat()
-  })
-
   ipcMain.on('window-close', showPet)
   ipcMain.on('window-minimize', () => mainWindow?.minimize())
   ipcMain.on('window-hide', showPet)
@@ -371,7 +362,7 @@ function registerIpcHandlers() {
     }
   })
   ipcMain.handle('runtime-status:get', () => ({ ...runtimeStatus }))
-  ipcMain.handle('runtime-token:get', () => LOCAL_API_TOKEN)
+  ipcMain.handle('runtime-token:get', () => localApiToken)
   ipcMain.handle('setup:get', getSetupState)
   ipcMain.handle('setup:import-assets', async () => {
     const result = await selectAndImportAssets(mainWindow)
@@ -594,7 +585,11 @@ async function startBackend() {
     }
 
     const backendCommand = isDev
-      ? resolveRuntimeCommand('KALTSIT_PYTHON', [], 'python')
+      ? resolveRuntimeCommand(
+          'KALTSIT_PYTHON',
+          ['backend/.build-venv311/Scripts/python.exe'],
+          'python'
+        )
       : backendEntry
     const backendArgs = isDev ? [backendEntry] : []
     const child = spawn(backendCommand, backendArgs, {
@@ -607,7 +602,7 @@ async function startBackend() {
         KALTSIT_ASSETS_DIR: resolveAssetsDirectory(),
         KALTSIT_CONFIG_DIR: app.getPath('userData'),
         KALTSIT_DATA_DIR: app.getPath('userData'),
-        KALTSIT_LOCAL_TOKEN: LOCAL_API_TOKEN,
+        KALTSIT_LOCAL_TOKEN: localApiToken,
         PYTHONUNBUFFERED: '1'
       }
     })
@@ -682,7 +677,13 @@ async function startPet() {
       ['runtime/java/bin/java.exe', 'java/bin/java.exe'],
       'java'
     )
-    const child = spawn(javaCommand, ['-jar', selectedJar], {
+    const child = spawn(javaCommand, [
+      '-Dfile.encoding=UTF-8',
+      '-Dsun.stdout.encoding=UTF-8',
+      '-Dsun.stderr.encoding=UTF-8',
+      '-jar',
+      selectedJar
+    ], {
       cwd: path.dirname(selectedJar),
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -828,7 +829,12 @@ function pipeProcessOutput(name, child) {
 function isBackendRunning() {
   return new Promise(resolve => {
     let body = ''
-    const request = http.get(`http://${HOST}:${BACKEND_PORT}/health`, response => {
+    const request = http.get({
+      host: HOST,
+      port: BACKEND_PORT,
+      path: '/health',
+      headers: { 'X-Kaltsit-Token': localApiToken }
+    }, response => {
       response.setEncoding('utf8')
       response.on('data', chunk => { body += chunk })
       response.on('end', () => {
@@ -861,7 +867,7 @@ function backendRequest(method, requestPath, body = null) {
       path: requestPath,
       method,
       headers: {
-        'X-Kaltsit-Token': LOCAL_API_TOKEN,
+        'X-Kaltsit-Token': localApiToken,
         ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {})
       }
     }, response => {

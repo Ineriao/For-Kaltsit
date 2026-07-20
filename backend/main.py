@@ -94,7 +94,7 @@ app.add_middleware(
 @app.middleware("http")
 async def require_local_token(request: Request, call_next):
     public_read = request.method == "GET" and (
-        request.url.path == "/health"
+        (request.url.path == "/health" and not LOCAL_AUTH_TOKEN)
         or request.url.path.startswith("/assets/")
         or request.url.path.startswith("/voice/")
     )
@@ -449,6 +449,7 @@ async def update_knowledge_collection(collection_id: str, request: KnowledgeColl
         raise HTTPException(400, str(error)) from error
     if not collection:
         raise HTTPException(404, "知识分组不存在")
+    rag_service.invalidate_cache()
     return collection
 
 
@@ -492,6 +493,7 @@ async def update_knowledge_document(document_id: str, request: KnowledgeDocument
     document = database.set_document_enabled(document_id, request.enabled)
     if not document:
         raise HTTPException(404, "资料不存在")
+    rag_service.invalidate_cache()
     return document
 
 
@@ -541,7 +543,9 @@ async def create_database_backup():
 @app.post("/maintenance/backups/{filename}/restore")
 async def restore_database_backup(filename: str):
     try:
-        return await asyncio.to_thread(database.restore_backup, filename)
+        restored = await asyncio.to_thread(database.restore_backup, filename)
+        rag_service.invalidate_cache()
+        return restored
     except FileNotFoundError as error:
         raise HTTPException(404, "数据库备份不存在") from error
     except (ValueError, sqlite3.Error) as error:

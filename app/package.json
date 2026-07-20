@@ -5,6 +5,7 @@
   "author": "Ine",
   "main": "electron/main.js",
   "scripts": {
+    "setup:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-backend.ps1 -EnvironmentOnly",
     "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
     "build:backend": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-backend.ps1",
     "build:pet": "powershell -NoProfile -ExecutionPolicy Bypass -File ../scripts/build-pet-runtime.ps1",

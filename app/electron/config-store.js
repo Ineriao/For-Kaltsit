@@ -1,4 +1,5 @@
 const { app, safeStorage } = require('electron')
+const { randomBytes } = require('crypto')
 const fs = require('fs')
 const path = require('path')
 
@@ -51,6 +52,24 @@ function saveApiKey(apiKey) {
   writeConfig(config)
 }
 
+function getOrCreateLocalApiToken() {
+  const config = readConfig()
+  if (config.localApiToken && safeStorage.isEncryptionAvailable()) {
+    try {
+      return safeStorage.decryptString(Buffer.from(config.localApiToken, 'base64'))
+    } catch (error) {
+      console.error('[config] 本地认证令牌解密失败:', error.message)
+    }
+  }
+
+  const token = randomBytes(32).toString('hex')
+  if (safeStorage.isEncryptionAvailable()) {
+    config.localApiToken = safeStorage.encryptString(token).toString('base64')
+    writeConfig(config)
+  }
+  return token
+}
+
 function getPublicConfig() {
   const apiKey = getApiKey()
   return {
@@ -62,6 +81,7 @@ function getPublicConfig() {
 
 module.exports = {
   getApiKey,
+  getOrCreateLocalApiToken,
   getPublicConfig,
   saveApiKey
 }

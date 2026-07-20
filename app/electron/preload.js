@@ -1,11 +1,9 @@
 const { contextBridge, ipcRenderer } = require('electron')
 
 contextBridge.exposeInMainWorld('electronAPI', {
-  dragWindow: delta => ipcRenderer.send('window-drag', delta),
   closeWindow: () => ipcRenderer.send('window-close'),
   minimizeWindow: () => ipcRenderer.send('window-minimize'),
   hideWindow: () => ipcRenderer.send('window-hide'),
-  setMode: mode => ipcRenderer.send('mode-change', mode),
   setSettingsExpanded: expanded => ipcRenderer.send('settings-expanded', expanded),
   setPetLipSync: level => ipcRenderer.send('pet-lipsync', level),
   updateHitRegions: regions => ipcRenderer.send('hit-regions:update', regions),

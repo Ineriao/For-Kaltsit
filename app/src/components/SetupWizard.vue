@@ -69,10 +69,6 @@
       <p v-if="message" class="setup-message" :class="{ error: hasError }">{{ message }}</p>
 
       <footer class="setup-footer">
-        <div>
-          <small>DATA DIRECTORY</small>
-          <span>{{ state.dataDirectory || '等待系统分配' }}</span>
-        </div>
         <button type="button" class="finish-button" :disabled="busy || !state.complete" @click="finishSetup">
           启动 PRTS
         </button>
@@ -91,7 +87,6 @@ const state = ref({
   assetsReady: false,
   apiKeyConfigured: false,
   apiKeyHint: '',
-  dataDirectory: '',
   missingAssets: []
 })
 const apiKey = ref('')
@@ -233,7 +228,6 @@ function showMessage(text, error = false) {
 .setup-header small,
 .setup-intro small,
 .setup-step small,
-.setup-footer small,
 .setup-progress,
 label > span {
   font-family: var(--font-display);
@@ -354,10 +348,8 @@ input:focus { border-color: rgba(255, 255, 255, 0.52); }
 .setup-footer {
   min-height: 58px;
   margin-top: auto;
-  justify-content: space-between;
+  justify-content: flex-end;
   border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
-.setup-footer div { min-width: 0; display: grid; gap: 5px; }
-.setup-footer span { max-width: 570px; overflow: hidden; color: rgba(255, 255, 255, 0.42); font: 8px var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .finish-button { width: 150px; margin: 0; color: black; background: rgba(255, 255, 255, 0.92); font-weight: 650; }
 </style>

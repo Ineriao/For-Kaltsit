@@ -770,6 +770,9 @@ class Database:
 
     def _migrate_knowledge_schema(self, connection: sqlite3.Connection) -> None:
         timestamp = utc_now()
+        fts_exists = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'knowledge_fts'"
+        ).fetchone() is not None
         connection.execute(
             """
             INSERT OR IGNORE INTO knowledge_collections(id, name, enabled, created_at, updated_at)
@@ -791,10 +794,15 @@ class Database:
             "locator_json": "TEXT NOT NULL DEFAULT '{}'",
             "content_hash": "TEXT NOT NULL DEFAULT ''",
         }
+        schema_changed = False
         for column, definition in document_columns.items():
-            self._ensure_column(connection, "documents", column, definition)
+            schema_changed = self._ensure_column(
+                connection, "documents", column, definition
+            ) or schema_changed
         for column, definition in chunk_columns.items():
-            self._ensure_column(connection, "knowledge_chunks", column, definition)
+            schema_changed = self._ensure_column(
+                connection, "knowledge_chunks", column, definition
+            ) or schema_changed
         connection.execute(
             """
             UPDATE documents SET collection_id = COALESCE(NULLIF(collection_id, ''), 'default'),
@@ -819,6 +827,11 @@ class Database:
             );
             """
         )
+        chunk_count = connection.execute("SELECT COUNT(*) FROM knowledge_chunks").fetchone()[0]
+        fts_count = connection.execute("SELECT COUNT(*) FROM knowledge_fts").fetchone()[0]
+        if fts_exists and not schema_changed and chunk_count == fts_count:
+            return
+
         connection.execute("DELETE FROM knowledge_fts")
         rows = connection.execute(
             """
@@ -844,10 +857,12 @@ class Database:
         )
 
     @staticmethod
-    def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    def _ensure_column(connection: sqlite3.Connection, table: str, column: str, definition: str) -> bool:
         columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
         if column not in columns:
             connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            return True
+        return False
 
     @staticmethod
     def _require_collection(connection: sqlite3.Connection, collection_id: str) -> None:

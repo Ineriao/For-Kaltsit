@@ -6,11 +6,18 @@ $toolDirectory = Join-Path $repository '.build-tools'
 $runtime = Join-Path $petProject 'build\runtime'
 $configuredJdk = $env:KALTSIT_JDK17
 
-if (Test-Path $runtime) {
-    throw "Java runtime output already exists: $runtime"
+function Test-Jdk17([string]$candidate) {
+    if (-not $candidate) { return $false }
+    $java = Join-Path $candidate 'bin\java.exe'
+    $javac = Join-Path $candidate 'bin\javac.exe'
+    $jlink = Join-Path $candidate 'bin\jlink.exe'
+    if (-not (Test-Path $java) -or -not (Test-Path $javac) -or -not (Test-Path $jlink)) {
+        return $false
+    }
+    return ((& $java --version) -match '^openjdk 17\.')
 }
 
-if ($configuredJdk -and (Test-Path (Join-Path $configuredJdk 'bin\jlink.exe'))) {
+if (Test-Jdk17 $configuredJdk) {
     $jdk = Resolve-Path $configuredJdk
 } else {
     $jdk = Get-ChildItem `
@@ -18,8 +25,7 @@ if ($configuredJdk -and (Test-Path (Join-Path $configuredJdk 'bin\jlink.exe'))) 
         (Join-Path $env:ProgramFiles 'Microsoft'), `
         (Join-Path $env:ProgramFiles 'Eclipse Adoptium') `
         -Directory -ErrorAction SilentlyContinue |
-        Where-Object { Test-Path (Join-Path $_.FullName 'bin\jlink.exe') } |
-        Where-Object { (& (Join-Path $_.FullName 'bin\java.exe') -version 2>&1) -match 'version "17\.' } |
+        Where-Object { Test-Jdk17 $_.FullName } |
         Select-Object -First 1 -ExpandProperty FullName
 }
 
@@ -33,8 +39,7 @@ if (-not $jdk) {
     }
     Expand-Archive -Path $archive -DestinationPath $toolDirectory
     $jdk = Get-ChildItem $toolDirectory -Directory |
-        Where-Object { Test-Path (Join-Path $_.FullName 'bin\jlink.exe') } |
-        Where-Object { (& (Join-Path $_.FullName 'bin\java.exe') -version 2>&1) -match 'version "17\.' } |
+        Where-Object { Test-Jdk17 $_.FullName } |
         Select-Object -First 1 -ExpandProperty FullName
 }
 
@@ -45,7 +50,12 @@ if (-not $jdk) {
 $env:JAVA_HOME = $jdk
 $env:Path = "$(Join-Path $jdk 'bin');$env:Path"
 
+if (Test-Path $runtime) {
+    Remove-Item -LiteralPath $runtime -Recurse -Force
+}
+
 & (Join-Path $petProject 'gradlew.bat') -p $petProject jar
+if ($LASTEXITCODE -ne 0) { throw 'Desktop pet build failed.' }
 & (Join-Path $jdk 'bin\jlink.exe') `
     --add-modules 'java.base,java.desktop,java.logging,java.management,java.naming,jdk.unsupported,jdk.crypto.ec' `
     --strip-debug `
@@ -53,3 +63,4 @@ $env:Path = "$(Join-Path $jdk 'bin');$env:Path"
     --no-man-pages `
     --compress=2 `
     --output $runtime
+if ($LASTEXITCODE -ne 0) { throw 'Java runtime packaging failed.' }

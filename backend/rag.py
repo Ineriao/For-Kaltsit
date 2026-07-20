@@ -1,4 +1,5 @@
 import hashlib
+import heapq
 import math
 import re
 import threading
@@ -20,9 +21,10 @@ class RagService:
         self.model_directory = database.data_directory / "models"
         self.manual_model_directory = self.model_directory / "manual-bge-small-zh-v1.5"
         self.downloaded_model_directory = self.model_directory / "fast-bge-small-zh-v1.5"
-        self.ready_marker = self.model_directory / ".bge-small-zh-v1.5-ready"
         self._model = None
         self._model_lock = threading.Lock()
+        self._chunk_cache = None
+        self._chunk_cache_lock = threading.Lock()
         self.parser = KnowledgeParser()
 
     def status(self) -> dict:
@@ -43,8 +45,7 @@ class RagService:
         self.model_directory.mkdir(parents=True, exist_ok=True)
         if not self._downloaded_model_ready():
             self._download_model_archive()
-        self._load_model(allow_download=False)
-        self.ready_marker.touch(exist_ok=True)
+        self._load_model()
         self.index_pending_chunks()
         return self.status()
 
@@ -56,7 +57,7 @@ class RagService:
             self._extract_model_archive(archive)
         if not self._manual_model_ready() and not self._downloaded_model_ready():
             raise RuntimeError("未找到可用的本地向量模型")
-        self._load_model(allow_download=False)
+        self._load_model()
         self.index_pending_chunks()
         return self.status()
 
@@ -86,7 +87,8 @@ class RagService:
             source_modified_at=source_modified_at,
             metadata=metadata,
         )
-        model = self._load_model(allow_download=False)
+        self.invalidate_cache()
+        model = self._load_model()
         if model and import_status != "unchanged":
             self._index_document(document["id"], model)
             document = self.database.get_document(document["id"])
@@ -94,10 +96,17 @@ class RagService:
         return document
 
     def delete_document(self, document_id: str) -> bool:
-        return self.database.delete_document(document_id)
+        deleted = self.database.delete_document(document_id)
+        if deleted:
+            self.invalidate_cache()
+        return deleted
+
+    def invalidate_cache(self) -> None:
+        with self._chunk_cache_lock:
+            self._chunk_cache = None
 
     def index_pending_chunks(self) -> None:
-        model = self._load_model(allow_download=False)
+        model = self._load_model()
         if not model:
             return
         for document in self.database.list_documents():
@@ -105,21 +114,21 @@ class RagService:
                 self._index_document(document["id"], model)
 
     def retrieve(self, query: str, limit: int = 4) -> list[dict]:
-        chunks = self.database.list_knowledge_chunks()
-        if not chunks or not query.strip():
+        if not query.strip():
             return []
 
         query_terms = self._keyword_terms(query)
-        query_embedding = None
-        model = self._load_model(allow_download=False)
-        if model:
-            query_embedding = self._embed_texts(model, [query])[0]
-
         fts_results = self.database.search_knowledge_fts(query, limit=max(limit * 6, 24))
         fts_scores = {
             chunk["id"]: 1.0 / math.sqrt(index + 1)
             for index, chunk in enumerate(fts_results)
         }
+        model = self._load_model()
+        query_embedding = self._embed_texts(model, [query])[0] if model else None
+        chunks = self._get_cached_chunks() if query_embedding is not None else fts_results
+        if not chunks:
+            return []
+
         ranked = []
         for chunk in chunks:
             keyword_score = self._keyword_score(query_terms, chunk["content"])
@@ -140,9 +149,8 @@ class RagService:
             if score > 0.05:
                 ranked.append((score, chunk))
 
-        ranked.sort(key=lambda item: item[0], reverse=True)
         results = []
-        for score, chunk in ranked[:limit]:
+        for score, chunk in heapq.nlargest(limit, ranked, key=lambda item: item[0]):
             results.append({
                 "document_id": chunk["document_id"],
                 "title": chunk["title"],
@@ -156,7 +164,13 @@ class RagService:
             })
         return results
 
-    def _load_model(self, allow_download: bool):
+    def _get_cached_chunks(self) -> list[dict]:
+        with self._chunk_cache_lock:
+            if self._chunk_cache is None:
+                self._chunk_cache = self.database.list_knowledge_chunks()
+            return self._chunk_cache
+
+    def _load_model(self):
         if self._model is not None:
             return self._model
         local_model_directory = self._local_model_directory()
@@ -233,6 +247,7 @@ class RagService:
         for chunk, vector in zip(pending, vectors, strict=True):
             updates.append((chunk["id"], vector.tobytes(), len(vector)))
         self.database.update_chunk_embeddings(updates)
+        self.invalidate_cache()
 
     @staticmethod
     def _embed_texts(model, texts: list[str]) -> list[array]:
