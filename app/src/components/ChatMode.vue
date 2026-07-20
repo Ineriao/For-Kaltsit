@@ -49,7 +49,6 @@
 
       <footer class="subtitle-dock" :class="{ focused: composerFocused }">
         <div class="dock-glow" />
-        <div class="window-drag-handle" title="拖动窗口" />
 
         <header class="dock-head">
           <div class="speaker-lockup">
@@ -889,38 +888,13 @@ function syncHitRegions() {
   pointer-events: none;
 }
 
-.window-drag-handle {
-  width: 64px;
-  height: 13px;
-  position: absolute;
-  top: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  -webkit-app-region: drag;
-  cursor: url('/cursors/PRTS - move 移动.cur'), move;
-}
-
-.window-drag-handle::after {
-  content: '';
-  width: 30px;
-  height: 1px;
-  position: absolute;
-  top: 5px;
-  left: 17px;
-  background: rgba(255, 255, 255, 0.18);
-  transition: background 180ms ease, box-shadow 180ms ease;
-}
-
-.window-drag-handle:hover::after {
-  background: rgba(255, 255, 255, 0.72);
-  box-shadow: 0 0 8px rgba(255, 255, 255, 0.35);
-}
-
 .dock-head {
   height: 28px;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
+  -webkit-app-region: drag;
+  cursor: url('/cursors/PRTS - move 移动.cur'), move;
 }
 
 .speaker-lockup {

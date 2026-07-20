@@ -40,6 +40,16 @@ const { DesktopTools } = require('./desktop-tools')
 const { DiagnosticsManager } = require('./diagnostics-manager')
 const { UpdateManager } = require('./update-manager')
 
+function guardBrokenPipe(stream) {
+  stream?.on('error', error => {
+    if (error.code !== 'EPIPE') throw error
+  })
+}
+
+// 父级启动终端退出后，日志管道断开不应导致桌面进程崩溃。
+guardBrokenPipe(process.stdout)
+guardBrokenPipe(process.stderr)
+
 const COLLAPSED_SIZE = { width: 500, height: 700 }
 const EXPANDED_SIZE = { width: 860, height: 700 }
 const HOST = '127.0.0.1'

@@ -257,7 +257,7 @@ function setMessage(text, error = false) {
 .diagnostics-head span { display: grid; gap: 4px; }
 .diagnostics-head small, .diagnostic-block > header small { color: rgba(255,255,255,.4); font: 9px/1 'Novecento Sans', sans-serif; letter-spacing: .13em; }
 .diagnostics-head b { font-size: 18px; font-weight: 500; letter-spacing: .08em; }
-button { min-height: 28px; padding: 0 9px; border: 1px solid rgba(255,255,255,.17); color: #fff; background: rgba(0,0,0,.24); font: inherit; cursor: pointer; transition: border-color .2s, background .2s, transform .15s; }
+button { min-height: 28px; padding: 0 9px; border: 1px solid rgba(255,255,255,.17); color: #fff; background: rgba(0,0,0,.24); font: 7px/1 var(--font-mono); cursor: pointer; transition: border-color .2s, background .2s, transform .15s; }
 button:hover:not(:disabled) { border-color: rgba(255,255,255,.62); background: rgba(255,255,255,.07); }
 button:active:not(:disabled) { transform: translateY(1px); }
 button:disabled { opacity: .27; cursor: default; }
@@ -288,7 +288,7 @@ dd { margin: 0; color: rgba(255,255,255,.78); font: 9px/1 'Novecento Sans', sans
 .backup-list article span { min-width: 0; display: grid; gap: 3px; }
 .backup-list article b { overflow: hidden; font-size: 9px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
 .backup-list article small { color: rgba(255,255,255,.34); font-size: 8px; }
-.backup-list article button { min-height: 24px; font-size: 9px; }
+.backup-list article button { min-height: 24px; font-size: 7px; }
 .event-block > p { color: rgba(255,255,255,.35); font-size: 9px; }
 .event-block article { display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,.06); }
 .event-block article > span { color: rgba(255,255,255,.64); font: 8px/1 'Novecento Sans', sans-serif; text-transform: uppercase; }
